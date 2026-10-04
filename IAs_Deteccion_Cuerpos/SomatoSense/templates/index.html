@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>SomatoSense</title>
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'&gt;
+  &lt;circle cx='64' cy='64' r='60' fill='none' stroke='%23e0e0e0' stroke-width='2'/&gt;
+  
+  &lt;!-- Ectomorfo (azul) --&gt;
+  &lt;path d='M38 28 Q32 32,34 40 Q34 52,36 72 Q36 82,34 92 Q34 100,38 104 
+           Q42 100,42 92 Q40 82,40 72 Q40 52,40 40 Q40 32,38 28 
+           M30 48 L46 48 M30 84 L46 84' 
+        fill='none' stroke='%234a9eff' stroke-width='4' stroke-linecap='round'/&gt;
+  &lt;circle cx='38' cy='20' r='8' fill='%234a9eff'/&gt;
+  
+  &lt;!-- Mesomorfo (verde) --&gt;
+  &lt;path d='M64 24 Q54 28,56 38 Q54 50,58 68 Q58 78,54 96 Q54 106,64 108 
+           Q74 106,74 96 Q70 78,70 68 Q74 50,72 38 Q74 28,64 24 
+           M50 52 L78 52 M48 88 L80 88' 
+        fill='none' stroke='%2334c759' stroke-width='6' stroke-linecap='round'/&gt;
+  &lt;circle cx='64' cy='16' r='10' fill='%2334c759'/&gt;
+  
+  &lt;!-- Endomorfo (rojo) --&gt;
+  &lt;path d='M90 32 Q82 36,84 48 Q82 64,88 80 Q92 92,86 104 Q96 104,94 92 
+           Q96 80,92 64 Q96 48,92 36 Q96 36,90 32 
+           M80 56 L100 56 M78 88 L102 88' 
+        fill='none' stroke='%23ff6b6b' stroke-width='5' stroke-linecap='round'/&gt;
+  &lt;circle cx='90' cy='24' r='9' fill='%23ff6b6b'/&gt;
+&lt;/svg&gt;" type="image/svg+xml">
+
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: #f0f7ff;
+            color: #333;
+            text-align: center;
+            padding: 30px;
+        }
+        h1 {
+            color: #0056b3;
+            font-size: 3rem;
+            margin-bottom: 5px;
+        }
+        .header-img {
+            width: 500px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+        }
+        form {
+            margin: 30px auto;
+            padding: 20px;
+            background: #dbe9ff;
+            border-radius: 12px;
+            width: 80%;
+            max-width: 500px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #0056b3;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        img.result {
+            max-width: 90%;
+            margin-top: 20px;
+            border-radius: 10px;
+            border: 4px solid #0056b3;
+        }
+        li {
+            background: #dbe9ff;
+            margin: 8px 0;
+            padding: 10px;
+            border-radius: 8px;
+        }
+    </style>
+
+<script>
+function toggleStream() {
+    const cont = document.getElementById("live-stream");
+    const vid = document.getElementById("live-video");
+    const btn = document.getElementById("toggle-button");
+
+    if (cont.style.display === "none") {
+        cont.style.display = "block";
+        vid.src = "{{ url_for('video') }}";
+        btn.innerText = "Ocultar cámara en vivo";
+    } else {
+        cont.style.display = "none";
+        vid.src = "";
+        btn.innerText = "Mostrar cámara en vivo";
+    }
+}
+</script>
+
+</head>
+<body>
+
+<img src="https://cdn.shopify.com/s/files/1/0656/5960/1036/files/somatotipos-fitness-gymhawk.webp?v=1752898772" class="header-img">
+
+<h1>SomatoSense</h1>
+<p>Clasificación de somatotipo</p>
+
+<form method="POST" enctype="multipart/form-data">
+    <input type="file" name="image" accept="image/*" required>
+    <br>
+    <button type="submit">Detectar Somatotipo</button>
+</form>
+
+{% if result_image %}
+<h2>Resultado</h2>
+
+<img class="result" src="{{ url_for('static', filename=result_image) }}">
+
+<ul>
+{% for d in detections %}
+    <li><strong>{{ d.name }}</strong> — {{ d.confidence }}%</li>
+{% endfor %}
+</ul>
+{% endif %}
+
+<hr style="margin: 40px 0;">
+
+<h2>Detección en tiempo real</h2>
+<button id="toggle-button" onclick="toggleStream()">Mostrar cámara en vivo</button>
+
+<div id="live-stream" style="display:none;">
+    <img id="live-video" width="640">
+</div>
+
+</body>
+</html>

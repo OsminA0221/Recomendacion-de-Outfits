@@ -1,0 +1,190 @@
+# Proyecto IA - Recomendación de vestimenta
+
+Sistema de inteligencia artificial orientado a la identificación de características físicas mediante cámara y su posterior utilización para generar recomendaciones de vestimenta personalizadas.
+
+## Descripción
+
+El proyecto busca desarrollar un sistema capaz de analizar diferentes características de una persona mediante visión por computadora y utilizar los resultados para determinar combinaciones de vestimenta adecuadas.
+
+El sistema se encuentra dividido en diferentes módulos de inteligencia artificial, permitiendo desarrollar y probar cada componente de manera independiente antes de integrarlos en una aplicación conjunta.
+
+## Módulos del proyecto
+
+### 1. Detección de forma corporal
+
+Ubicación:
+
+`IAs_Deteccion_Cuerpos/Formas_Cuerpo/`
+
+Este módulo utiliza la cámara para detectar la postura corporal y obtener proporciones geométricas del cuerpo.
+
+Actualmente permite:
+
+* Detectar una persona mediante la cámara.
+* Obtener puntos de referencia corporales.
+* Calcular proporciones corporales.
+* Suavizar las mediciones obtenidas.
+* Clasificar la forma corporal.
+* Mostrar los resultados en tiempo real.
+
+### 2. Detección de tonalidad de piel
+
+Ubicación:
+
+`Tonalidades_Piel/`
+
+Este módulo utiliza una cámara para detectar el rostro y estimar la tonalidad de piel.
+
+Actualmente permite:
+
+* Capturar imágenes mediante la cámara.
+* Detectar rostros.
+* Obtener colores dominantes de la piel.
+* Clasificar la tonalidad.
+* Mostrar la tonalidad y precisión obtenidas en tiempo real.
+
+Este módulo utiliza como base la librería
+`ChenglongMa/SkinToneClassifier`.
+
+### 3. Clasificación de somatotipo
+
+Ubicación:
+
+`IA_Somatotipo/`
+
+Este módulo se encuentra en desarrollo y estará orientado a la clasificación del somatotipo corporal.
+
+## Arquitectura
+
+Cada módulo de inteligencia artificial mantiene su propio entorno virtual de Python para evitar conflictos entre versiones y dependencias.
+
+```text
+Proyecto IA
+│
+├── IAs_Deteccion_Cuerpos
+│   └── Formas_Cuerpo
+│       ├── src
+│       ├── main.py
+│       └── venv
+│
+├── Tonalidades_Piel
+│   ├── src
+│   ├── app
+│   └── venv
+│
+└── IA_Somatotipo
+    └── venv
+```
+
+## Tecnologías
+
+* Python
+* OpenCV
+* MediaPipe
+* NumPy
+* SkinToneClassifier
+* Visión por computadora
+
+## Requisitos
+
+Se recomienda utilizar Python 3.12.
+
+Cada módulo posee sus propias dependencias y debe ejecutarse utilizando su respectivo entorno virtual.
+
+## Instalación
+
+Clonar el repositorio:
+
+```bash
+git clone URL_DEL_REPOSITORIO
+```
+
+Entrar al módulo que se desea utilizar y crear/activar su entorno virtual.
+
+Ejemplo:
+
+```bash
+cd IAs_Deteccion_Cuerpos/Formas_Cuerpo
+py -3.12 -m venv venv
+```
+
+Activar el entorno:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+Instalar las dependencias:
+
+```bash
+pip install -r requirements.txt
+```
+
+Para la detección de tonalidad de piel:
+
+```bash
+cd Tonalidades_Piel
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -e .
+```
+
+## Ejecución
+
+### Detección de forma corporal
+
+Desde:
+
+```text
+IAs_Deteccion_Cuerpos/Formas_Cuerpo/
+```
+
+ejecutar:
+
+```bash
+python main.py
+```
+
+### Tonalidad de piel
+
+Desde:
+
+```text
+Tonalidades_Piel/
+```
+
+ejecutar:
+
+```bash
+python app/camera_skin_tone.py
+```
+
+Para finalizar la ejecución de la cámara se puede presionar:
+
+```text
+Q
+```
+
+## Organización de los entornos
+
+Cada IA utiliza un entorno virtual independiente.
+
+Esto permite que las versiones de OpenCV, MediaPipe y otras dependencias puedan ser administradas de manera independiente y evita conflictos entre los módulos.
+
+## Licencias y atribuciones
+
+Este proyecto utiliza componentes y librerías de terceros. Cada componente mantiene las condiciones de licencia correspondientes a su proyecto original.
+
+La funcionalidad de clasificación de tonalidad de piel utiliza como base:
+
+**SkinToneClassifier — ChenglongMa**
+
+Repositorio original:
+
+https://github.com/ChenglongMa/SkinToneClassifier
+
+Se mantienen las atribuciones y condiciones de licencia correspondientes al código de terceros utilizado.
+
+## Autores
+
+Proyecto desarrollado como parte de un proyecto académico de inteligencia artificial y visión por computadora.
