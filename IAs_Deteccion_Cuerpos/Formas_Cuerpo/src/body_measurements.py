@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import numpy as np
 from typing import Optional
 
 from src.pose_detector import BodyLandmarks, PoseDetector
@@ -159,87 +160,6 @@ def _smooth_width_curve(
     return smoothed
 
 
-def _measure_hip_width_2d(
-    detector: PoseDetector,
-    hip_y: float,
-    torso_height: float
-) -> Optional[float]:
-    """
-    Detecta el ancho de cadera utilizando la silueta 2D.
-
-    No utiliza simplemente max(widths).
-
-    En su lugar:
-
-    1. Define una región alrededor de la cadera.
-    2. Obtiene múltiples cortes horizontales.
-    3. Suaviza la curva.
-    4. Encuentra el máximo de la curva suavizada.
-    5. Promedia varios puntos alrededor de ese máximo.
-
-    Esto reduce considerablemente los saltos causados por
-    ruido de segmentación.
-    """
-
-    # Región anatómica de búsqueda.
-
-    start_y = hip_y - torso_height * 0.08
-    end_y = hip_y + torso_height * 0.22
-
-    measurements = _sample_widths(
-        detector,
-        start_y,
-        end_y,
-        samples_count=25
-    )
-
-    if len(measurements) < 7:
-        return None
-
-    measurements = _smooth_width_curve(
-        measurements,
-        window=3
-    )
-
-    if not measurements:
-        return None
-
-    # Encontrar el punto más ancho de la curva suavizada.
-
-    peak_index = max(
-        range(len(measurements)),
-        key=lambda i: measurements[i][1]
-    )
-
-    # En vez de utilizar únicamente el máximo,
-    # tomamos varios puntos alrededor del máximo.
-
-    neighborhood_radius = 2
-
-    start_index = max(
-        0,
-        peak_index - neighborhood_radius
-    )
-
-    end_index = min(
-        len(measurements),
-        peak_index + neighborhood_radius + 1
-    )
-
-    neighborhood = measurements[
-        start_index:end_index
-    ]
-
-    if len(neighborhood) < 3:
-        return None
-
-    # Promedio de la zona más ancha.
-
-    return sum(
-        width for _, width in neighborhood
-    ) / len(neighborhood)
-
-
 def _measure_waist_width_2d(
     detector: PoseDetector,
     shoulder_y: float,
@@ -303,6 +223,39 @@ def _measure_waist_width_2d(
         width for _, width in neighborhood
     ) / len(neighborhood)
 
+def _measure_true_hip_2d(
+    detector: PoseDetector,
+    pelvis_y: float,
+    torso_height: float
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    Escanea desde la pelvis hasta la entrepierna para asegurar que 
+    encuentra el punto absolutamente más ancho de la cadera/glúteos.
+    """
+    
+    # Ampliamos el rango: escaneamos hasta un 35% por debajo de la pelvis.
+    # Esto asegura que cruzamos toda la zona de glúteos y cadera baja.
+    start_y = pelvis_y
+    end_y = pelvis_y + (torso_height * 0.35)
+
+    measurements = _sample_widths(
+        detector,
+        start_y,
+        end_y,
+        samples_count=30 # Subimos a 30 cortes horizontales para no fallar
+    )
+
+    if len(measurements) < 3:
+        return None, None
+
+    # Eliminamos el suavizado en esta zona para que la matemática no "aplaste"
+    # la curva de tu cadera y detecte el píxel exacto más ancho.
+    best_y, best_width = max(
+        measurements,
+        key=lambda m: m[1]
+    )
+
+    return best_width, best_y
 
 def compute_proportions(
     landmarks: BodyLandmarks,
@@ -392,15 +345,16 @@ def compute_proportions(
             )
         )
 
-        silhouette_hip = _measure_hip_width_2d(
+        silhouette_waist = _measure_waist_width_2d(
             detector,
+            shoulder_y,
             hip_y,
             torso_height
         )
 
-        silhouette_waist = _measure_waist_width_2d(
+        # Usamos la nueva función para obtener también la altura (Y)
+        silhouette_hip, new_hip_y = _measure_true_hip_2d(
             detector,
-            shoulder_y,
             hip_y,
             torso_height
         )
@@ -414,6 +368,10 @@ def compute_proportions(
             shoulder_width = silhouette_shoulder
             hip_width = silhouette_hip
             waist_width = silhouette_waist
+            
+            # ¡LA CLAVE ESTÁ AQUÍ! 
+            # Actualizamos hip_y para que overlay.py dibuje más abajo
+            hip_y = new_hip_y 
 
             measured_from_silhouette = True
 

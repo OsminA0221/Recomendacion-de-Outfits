@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.egg-info/
+.vscode/
+.idea/
+*.mp4
+*.avi
+capturas/
+.venv
+models/*
