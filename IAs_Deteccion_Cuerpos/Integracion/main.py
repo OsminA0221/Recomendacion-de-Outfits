@@ -16,6 +16,17 @@ from analyzers import (
 from config import Config
 from pipeline import AnalysisPipeline
 from profile_store import ANALYZER_NAMES, Profile, ProfileManager
+import sys
+from pathlib import Path
+
+# Sube un nivel desde 'Integracion' hacia 'IAs_Deteccion_Cuerpos'
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Ruta hacia la carpeta 'src' que contiene 'stone'
+RUTA_SRC_STONE = BASE_DIR / "Tonalidades_Piel" / "src"
+
+if str(RUTA_SRC_STONE) not in sys.path:
+    sys.path.insert(0, str(RUTA_SRC_STONE))
 
 WINDOW = "Outfit AI - 3 IAs en paralelo"
 FONT = cv2.FONT_HERSHEY_SIMPLEX
