@@ -1,3 +1,13 @@
+"""Las 3 IAs envueltas con una misma interfaz.
+
+Cada analizador recibe un frame BGR y devuelve un AnalyzerResult:
+    ok=True  -> data con los resultados
+    ok=False -> reason explica por que no se detecto bien
+
+Cada analizador tiene SU PROPIO modelo/estado, asi pueden correr en
+hilos distintos sin pisarse.
+"""
+
 from __future__ import annotations
 
 import os
@@ -8,10 +18,11 @@ from pathlib import Path
 
 import cv2
 
-# stone consulta PyPI al importarse; lo desactivamos para no demorar el arranque
+# stone consulta PyPI al importarse; lo desactivamos para no demorar
+# (ni fallar) el arranque cuando no hay internet.
 os.environ.setdefault("STONE_UPGRADE_FLAG", "1")
 
-_ROOT = Path(__file__).resolve().parents[1]          # IAs_Deteccion_Cuerpos/
+_ROOT = Path(__file__).resolve().parents[1]
 FORMAS_DIR = _ROOT / "Formas_Cuerpo"
 SOMATO_WEIGHTS = _ROOT / "SomatoSense" / "best.pt"
 
@@ -32,7 +43,6 @@ def _fail(reason: str) -> AnalyzerResult:
     return AnalyzerResult(False, reason=reason)
 
 
-
 class BaseAnalyzer:
     name = "base"
 
@@ -40,11 +50,11 @@ class BaseAnalyzer:
         raise NotImplementedError
 
     def run(self, frame) -> AnalyzerResult:
-        """analyze() + medición de tiempo + captura de excepciones."""
+        """analyze() + medicion de tiempo + captura de excepciones."""
         t0 = time.perf_counter()
         try:
             result = self.analyze(frame)
-        except Exception as exc:  # una IA caída no debe tumbar a las demás
+        except Exception as exc:  # una IA caida no debe tumbar a las demas
             result = _fail(f"error interno: {type(exc).__name__}: {exc}")
         result.latency = time.perf_counter() - t0
         return result
@@ -56,7 +66,20 @@ class BaseAnalyzer:
 class BodyShapeAnalyzer(BaseAnalyzer):
     name = "forma"
 
-    def __init__(self, smoothing_alpha: float):
+    def __init__(
+        self,
+        smoothing_alpha: float,
+        max_waist_to_hip: float = 1.15,
+        shoulder_hip_range: tuple = (0.60, 1.70),
+    ):
+        # Rangos fisicamente razonables. Fuera de ellos casi siempre es ropa
+        # holgada, brazos pegados al torso o puntos mal ubicados: mejor
+        # esperar una medicion buena que guardar una forma equivocada.
+        self.max_waist_to_hip = max_waist_to_hip
+        self.shoulder_hip_range = shoulder_hip_range
+
+        # Formas_Cuerpo usa imports "from src...."; basta con tener su
+        # carpeta en sys.path (no hace falta tocar sus archivos).
         if str(FORMAS_DIR) not in sys.path:
             sys.path.insert(0, str(FORMAS_DIR))
         from src.pose_detector import PoseDetector
@@ -80,25 +103,50 @@ class BodyShapeAnalyzer(BaseAnalyzer):
 
         if not landmarks.visibility_ok:
             self.smoother.reset()
-            return _fail("cuerpo incompleto (muestrate de cuerpo completo)")
+            return _fail(self.detector.last_issue or "no se ven bien hombros y caderas")
 
         props = self._compute(
             landmarks, detector=self.detector, smoother=self.smoother
         )
 
-        # Si la medición cayó al respaldo por landmarks, no es confiable
         if not props.measured_from_silhouette:
             self.smoother.reset()
             return _fail("no se pudo medir la silueta")
 
         shape = self._classify(props)
+
+        # Mantener el comportamiento de la IA standalone (Formas_Cuerpo):
+        # no rechazar una deteccion solo porque cae fuera de rangos tan
+        # estrictos. En la version standalone la forma siempre intenta
+        # clasificarse con la geometria disponible; esa es la regla que
+        # queremos replicar aqui para que la integracion se comporte igual.
+        # Solo descartamos valores completamente no numericos o absurdos.
+        if not (float(shape.shoulder_to_hip_ratio) > 0 and float(shape.waist_to_hip_ratio) > 0):
+            self.smoother.reset()
+            return _fail("proporcion corporal invalida para clasificar")
+
+        # Extremos de la silueta (donde se mide) en pixeles, para dibujar
+        # desde el hilo principal.
+        h, w = frame.shape[:2]
+
+        def to_px(edges):
+            if edges is None:
+                return None
+            (xl, yl), (xr, yr) = edges
+            return ((int(xl * (w - 1)), int(yl * (h - 1))),
+                    (int(xr * (w - 1)), int(yr * (h - 1))))
+
         return _ok({
             "label": shape.label,
             "shoulder_to_hip": shape.shoulder_to_hip_ratio,
             "waist_to_hip": shape.waist_to_hip_ratio,
-            # copia en píxeles para dibujar desde el hilo principal
-            "points": list(self.detector._last_landmarks_px or []),
+            "edges": {
+                "hombros": to_px(props.shoulder_edges),
+                "cintura": to_px(props.waist_edges),
+                "cadera": to_px(props.hip_edges),
+            },
         })
+
 
 class SomatotypeAnalyzer(BaseAnalyzer):
     name = "somatotipo"
@@ -107,7 +155,7 @@ class SomatotypeAnalyzer(BaseAnalyzer):
         from ultralytics import YOLO
 
         if not Path(weights).exists():
-            raise FileNotFoundError(f"No se encontró {weights}")
+            raise FileNotFoundError(f"No se encontro {weights}")
         self.model = YOLO(str(weights))
         self.min_conf = min_conf
 
@@ -127,9 +175,20 @@ class SomatotypeAnalyzer(BaseAnalyzer):
             "confidence": round(float(boxes.conf[i]), 3),
             "bbox": (x1, y1, x2, y2),
         })
-    
+
 
 class SkinToneAnalyzer(BaseAnalyzer):
+    """
+    stone reduce la imagen a 250 px de ancho y exige un rostro de >= 90 px,
+    o sea, un rostro de mas o menos 1/3 del ancho del frame. Con la persona
+    de cuerpo completo (que pide Formas_Cuerpo) eso casi nunca ocurre.
+
+    Solucion: localizar el rostro en el frame completo y pasarle a stone
+    solo ese recorte. Ademas se descarta el modo de respaldo de stone
+    (face_id == "NA"), que clasifica la piel de toda la imagen aunque no
+    haya cara.
+    """
+
     name = "piel"
 
     def __init__(self, min_accuracy: float):
@@ -157,7 +216,7 @@ class SkinToneAnalyzer(BaseAnalyzer):
 
         x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
 
-        # Recorte con margen para que stone vuelva a encontrar la cara
+        # Recorte con margen para que stone vuelva a encontrar la cara.
         m = int(0.4 * max(w, h))
         H, W = frame.shape[:2]
         x1, y1 = max(0, x - m), max(0, y - m)
@@ -174,7 +233,6 @@ class SkinToneAnalyzer(BaseAnalyzer):
         )
         rec = records[0]
 
-        # "NA" = stone no halló cara y clasificó toda la imagen: se rechaza
         if rec.get("face_id") == "NA":
             return _fail("no se pudo aislar la piel del rostro")
 

@@ -24,12 +24,10 @@ while True:
         print("No se pudo obtener un frame de la cámara.")
         break
 
-    # Efecto espejo
     frame = cv2.flip(frame, 1)
 
     frame_count += 1
 
-    # Analizar cada 10 frames
     if frame_count % 10 == 0:
         cv2.imwrite(TEMP_IMAGE, frame)
 
@@ -56,7 +54,6 @@ while True:
         except Exception as e:
             print("Error al analizar imagen:", e)
 
-    # Mostrar información en pantalla
     cv2.putText(
         frame,
         f"Tono: {skin_tone}",
@@ -89,7 +86,6 @@ while True:
 
     cv2.imshow("Deteccion de Tonalidad de Piel", frame)
 
-    # Q para salir
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 

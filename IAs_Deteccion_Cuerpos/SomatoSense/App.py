@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_from_directory, Response
+from flask import Flask, render_template, request, Response
 from werkzeug.utils import secure_filename
 from ultralytics import YOLO
 import os
@@ -9,16 +9,12 @@ import time
 app = Flask(__name__)
 
 UPLOAD_FOLDER = 'uploads'
-RESULT_FOLDER = 'static'  # Manténlo como 'static' para Flask
+RESULT_FOLDER = 'static'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 
-# Cargar tu modelo entrenado
 model = YOLO("best.pt")
 
-# -----------------------------------------------------------
-# DETECCIÓN GENERAL
-# -----------------------------------------------------------
 def detectar_objetos(imagen_path):
     results = model.predict(source=imagen_path, save=False)
     detections = []
@@ -33,10 +29,8 @@ def detectar_objetos(imagen_path):
     result_name = f"result_{uuid.uuid4().hex[:6]}.jpg"
     save_path = os.path.join(RESULT_FOLDER, result_name)
     
-    # DEBUG: Verifica la ruta
     print(f"DEBUG - Ruta absoluta de save_path: {os.path.abspath(save_path)}")
     
-    # Guarda la imagen usando cv2 en lugar de results.save()
     try:
         annotated_frame = results[0].plot()
         success = cv2.imwrite(save_path, annotated_frame)
@@ -47,7 +41,6 @@ def detectar_objetos(imagen_path):
             print("DEBUG - Error: cv2.imwrite() falló")
     except Exception as e:
         print(f"DEBUG - Error al guardar: {e}")
-        # Fallback: intenta con el método original
         try:
             results[0].save(filename=save_path)
             print(f"DEBUG - Imagen guardada con método alternativo")
@@ -56,16 +49,6 @@ def detectar_objetos(imagen_path):
 
     return result_name, detections
 
-# -----------------------------------------------------------
-# RUTA PARA SERVIR ARCHIVOS DESDE STATIC
-# -----------------------------------------------------------
-# @app.route('/static/<filename>')
-# def serve_static(filename):
-#     return send_from_directory('static', filename)
-
-# -----------------------------------------------------------
-# RUTA PRINCIPAL
-# -----------------------------------------------------------
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
@@ -82,9 +65,6 @@ def index():
 
     return render_template('index.html')
 
-# -----------------------------------------------------------
-# STREAMING EN TIEMPO REAL
-# -----------------------------------------------------------
 def gen_frames():
     cap = cv2.VideoCapture(0)
     last_detection_time = 0
@@ -121,10 +101,6 @@ def gen_frames():
 def video():
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-# -----------------------------------------------------------
-# EJECUTAR
-# -----------------------------------------------------------
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=5000, debug=True)
-

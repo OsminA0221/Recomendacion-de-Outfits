@@ -34,6 +34,12 @@ class BodyProportions:
     # Indica si las medidas proceden de la silueta.
     measured_from_silhouette: bool
 
+    # Extremos izquierdo/derecho de la silueta en cada fila medida:
+    # ((x_izq, y), (x_der, y)) normalizados, o None si no se midió.
+    shoulder_edges: Optional[tuple] = None
+    waist_edges: Optional[tuple] = None
+    hip_edges: Optional[tuple] = None
+
 
 class TemporalSmoother:
     """
@@ -165,7 +171,7 @@ def _measure_waist_width_2d(
     shoulder_y: float,
     hip_y: float,
     torso_height: float
-) -> Optional[float]:
+) -> tuple[Optional[float], Optional[float]]:
     """
     Busca la cintura como una zona estrecha dentro de la región
     entre hombros y cadera.
@@ -186,14 +192,12 @@ def _measure_waist_width_2d(
     )
 
     if len(measurements) < 7:
-        return None
+        return None, None
 
     measurements = _smooth_width_curve(
         measurements,
         window=3
     )
-
-    # Buscar el punto más estrecho de la curva suavizada.
 
     min_index = min(
         range(len(measurements)),
@@ -217,11 +221,13 @@ def _measure_waist_width_2d(
     ]
 
     if len(neighborhood) < 3:
-        return None
+        return None, None
 
-    return sum(
+    avg_width = sum(
         width for _, width in neighborhood
     ) / len(neighborhood)
+
+    return avg_width, measurements[min_index][0]
 
 def _measure_true_hip_2d(
     detector: PoseDetector,
@@ -233,8 +239,6 @@ def _measure_true_hip_2d(
     encuentra el punto absolutamente más ancho de la cadera/glúteos.
     """
     
-    # Ampliamos el rango: escaneamos hasta un 35% por debajo de la pelvis.
-    # Esto asegura que cruzamos toda la zona de glúteos y cadera baja.
     start_y = pelvis_y
     end_y = pelvis_y + (torso_height * 0.35)
 
@@ -242,14 +246,12 @@ def _measure_true_hip_2d(
         detector,
         start_y,
         end_y,
-        samples_count=30 # Subimos a 30 cortes horizontales para no fallar
+        samples_count=30
     )
 
     if len(measurements) < 3:
         return None, None
 
-    # Eliminamos el suavizado en esta zona para que la matemática no "aplaste"
-    # la curva de tu cadera y detecte el píxel exacto más ancho.
     best_y, best_width = max(
         measurements,
         key=lambda m: m[1]
@@ -309,10 +311,6 @@ def compute_proportions(
         ankle_mid
     )
 
-    # ==========================================================
-    # RESPALDO MEDIANTE LANDMARKS
-    # ==========================================================
-
     fallback_shoulder_width = _euclidean(
         landmarks.left_shoulder,
         landmarks.right_shoulder
@@ -332,10 +330,7 @@ def compute_proportions(
     waist_width = fallback_waist_width
 
     measured_from_silhouette = False
-
-    # ==========================================================
-    # MEDICIONES MEDIANTE SILUETA
-    # ==========================================================
+    shoulder_edges = waist_edges = hip_edges = None
 
     if detector is not None:
 
@@ -345,14 +340,13 @@ def compute_proportions(
             )
         )
 
-        silhouette_waist = _measure_waist_width_2d(
+        silhouette_waist, waist_row_y = _measure_waist_width_2d(
             detector,
             shoulder_y,
             hip_y,
             torso_height
         )
 
-        # Usamos la nueva función para obtener también la altura (Y)
         silhouette_hip, new_hip_y = _measure_true_hip_2d(
             detector,
             hip_y,
@@ -369,9 +363,13 @@ def compute_proportions(
             hip_width = silhouette_hip
             waist_width = silhouette_waist
             
-            # ¡LA CLAVE ESTÁ AQUÍ! 
-            # Actualizamos hip_y para que overlay.py dibuje más abajo
-            hip_y = new_hip_y 
+            hip_y = new_hip_y
+
+            waist_y = waist_row_y
+
+            shoulder_edges = detector.silhouette_edges(shoulder_y)
+            waist_edges = detector.silhouette_edges(waist_row_y)
+            hip_edges = detector.silhouette_edges(new_hip_y)
 
             measured_from_silhouette = True
 
@@ -427,6 +425,10 @@ def compute_proportions(
         hip_y=hip_y,
 
         measured_from_silhouette=measured_from_silhouette,
+
+        shoulder_edges=shoulder_edges,
+        waist_edges=waist_edges,
+        hip_edges=hip_edges,
     )
 
 

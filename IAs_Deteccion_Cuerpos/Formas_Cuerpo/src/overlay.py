@@ -58,6 +58,64 @@ def _draw_measurement_line(
     )
 
 
+def _edge_points(frame: np.ndarray, edges):
+    """((x,y),(x,y)) normalizados -> dos puntos en píxeles (o None)."""
+    if edges is None:
+        return None
+    h, w = frame.shape[:2]
+    (xl, yl), (xr, yr) = edges
+    return (
+        (int(xl * (w - 1)), int(yl * (h - 1))),
+        (int(xr * (w - 1)), int(yr * (h - 1))),
+    )
+
+
+def _draw_edge_row(
+    frame: np.ndarray,
+    points,
+    color: tuple,
+    label: str
+) -> None:
+    """Segmento entre los dos extremos de la silueta + un punto en cada uno."""
+    if points is None:
+        return
+
+    left, right = points
+    cv2.line(frame, left, right, color, 3)
+
+    for pt in (left, right):
+        cv2.circle(frame, pt, 9, (255, 255, 255), -1)
+        cv2.circle(frame, pt, 6, color, -1)
+
+    h, w = frame.shape[:2]
+    text = f"{label} {right[0] - left[0]}px"
+    text_x = int(np.clip(right[0] + 14, 0, w - 170))
+    text_y = max(15, right[1] - 12)   # arriba de la línea para que se lea
+    cv2.putText(frame, text, (text_x, text_y), _FONT, 0.5, (0, 0, 0), 4)
+    cv2.putText(frame, text, (text_x, text_y), _FONT, 0.5, color, 2)
+
+
+def _draw_edge_skeleton(
+    frame: np.ndarray,
+    proportions: BodyProportions
+) -> None:
+    """Dibuja hombros, cintura y cadera EN LOS EXTREMOS de la silueta,
+    que es exactamente entre donde se miden los anchos."""
+
+    shoulders = _edge_points(frame, proportions.shoulder_edges)
+    waist = _edge_points(frame, proportions.waist_edges)
+    hips = _edge_points(frame, proportions.hip_edges)
+
+    for side in (0, 1):
+        chain = [r[side] for r in (shoulders, waist, hips) if r is not None]
+        for a, b in zip(chain, chain[1:]):
+            cv2.line(frame, a, b, (0, 200, 0), 2)
+
+    _draw_edge_row(frame, shoulders, _SHOULDER_COLOR, "hombros")
+    _draw_edge_row(frame, waist, _WAIST_COLOR, "cintura")
+    _draw_edge_row(frame, hips, _HIP_COLOR, "cadera")
+
+
 def draw_results(
     frame: np.ndarray,
     proportions: BodyProportions,
@@ -84,6 +142,8 @@ def draw_results(
         "CADERA",
         _HIP_COLOR
     )
+
+    _draw_edge_skeleton(frame, proportions)
 
     metodo = (
         "silueta 2D"

@@ -17,7 +17,6 @@ from stone.utils import is_url, extract_filename_and_extension, alphabet_id, Arg
 LOG = logging.getLogger(__name__)
 
 DEFAULT_TONE_PALETTE = {
-    # Default skin tone palette
     "perla": [
         "#373028",
         "#422811",
@@ -31,7 +30,6 @@ DEFAULT_TONE_PALETTE = {
         "#f3dad6",
         "#fbf2f3",
     ],
-    # Refer to this paper:
     # Monk, Ellis. "Monk Skin Tone Scale," 2019. https://skintone.google.
     "monk": [
         "#f6ede4",
@@ -45,7 +43,6 @@ DEFAULT_TONE_PALETTE = {
         "#3a312a",
         "#292420"
     ],
-    # Refer to this paper:
     # Ostfeld, M. C., & Yadon, N. (2022). Skin color, power, and politics in America. Russell Sage Foundation.
     "yadon-ostfeld": [
         "#36251d",
@@ -59,7 +56,6 @@ DEFAULT_TONE_PALETTE = {
         "#d4afa3",
         "#e6c6bf",
     ],
-    # Refer to this paper:
     # Proyecto sobre discriminación étnico-racial en México (PRODER). El Colegio de México. https://discriminacion.colmex.mx/encuesta-proder/
     "proder": [
         "#654d3e",
@@ -74,7 +70,6 @@ DEFAULT_TONE_PALETTE = {
         "#c5a691",
         "#c8ac99",
     ],
-    # Refer to this paper:
     # Leigh, A., & Susilo, T. (2009). Is voting skin-deep? Estimating the effect of candidate ballot photographs on election outcomes.
     # Journal of Economic Psychology, 30(1), 61-70.
     "bw": [
@@ -111,7 +106,7 @@ def default_tone_labels(tone_palette, prefix:str=""):
     prefix = prefix or ""
     return [f"{prefix}{alphabet_id(i)}" for i in range(len(tone_palette))]
 
-@functools.lru_cache(maxsize=128)  # Python 3.2+
+@functools.lru_cache(maxsize=128)
 def normalize_color(color):
     hex_color_pattern = re.compile(r"^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$")
     decimal_color_pattern = re.compile(
@@ -128,7 +123,6 @@ def normalize_color(color):
     raise ArgumentError(f"Invalid color code: {color}")
 
 
-# @functools.lru_cache(maxsize=128)  # Python 3.2+
 def normalize_palette(palette):
     return [normalize_color(color) for color in palette]
 
@@ -180,12 +174,10 @@ def is_black_white(image, threshold=192) -> bool:
     :param threshold:
     :return:
     """
-    # Reading Images
     if len(image.shape) == 2:
         return True
     h, w, *_ = image.shape
 
-    # Extracting Standard Deviation
     std = np.std(image, axis=2)
     below_t = np.sum(np.where(std <= 25))
     prob_bt = below_t / (h * w)
@@ -237,7 +229,6 @@ def detect_faces(
     )
     if len(faces) == 0:
         return []
-    # Change the format of faces from (x, y, w, h) to (x, y, x+w, y+h)
     faces[:, 2:] += faces[:, :2]
     return [face for face in faces if is_face(face, image, is_bw, threshold)]
 
@@ -263,9 +254,9 @@ def is_face(face_coord, image, is_bw, threshold=0.3):
 
 
 def mask_face(image, face):
-    x1, y1, x2, y2 = face
     mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    mask[y1:y2, x1:x2] = 255  # Fill with white color
+    x1, y1, x2, y2 = face
+    mask[y1:y2, x1:x2] = 255
     image = cv2.bitwise_and(image, image, mask=mask)
     return image
 
@@ -282,10 +273,8 @@ def detect_skin_in_bw(image):
 
 
 def detect_skin_in_color(image):
-    # Converting from BGR Colors Space to HSV
     img = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    # Defining skin Thresholds
     low_hsv = np.array([0, 48, 80], dtype=np.uint8)
     high_hsv = np.array([20, 255, 255], dtype=np.uint8)
 
@@ -380,11 +369,9 @@ def classify(
     detect_skin_fn = detect_skin_in_bw if is_bw else detect_skin_in_color
     skin, skin_mask = detect_skin_fn(image)
     dmnt_colors, dmnt_pcts = dominant_colors(skin, to_bw, n_dominant_colors)
-    # Generate readable strings
     hex_colors = ["#%02X%02X%02X" % tuple(np.around([r, g, b]).astype(int)) for b, g, r in dmnt_colors]
     pct_strs = ["%.2f" % p for p in dmnt_pcts]
     result = {"dominant_colors": [{"color": color, "percent": pct} for color, pct in zip(hex_colors, pct_strs)]}
-    # Calculate skin tone
     tone_id, tone_hex, tone_label, distance = skin_tone(dmnt_colors, dmnt_pcts, skin_tone_palette, tone_labels)
     accuracy = round(100 - distance, 2)
     result["skin_tone"] = tone_hex
@@ -393,17 +380,13 @@ def classify(
     if not verbose:
         return result, None
 
-    # 0. Create initial report image
     report_image = initial_report_image(image, report_image, skin_mask, use_face, to_bw)
     bar_width = 100
 
-    # 1. Create color bar for dominant colors
     color_bars = create_dominant_color_bar(report_image, dmnt_colors, dmnt_pcts, bar_width)
 
-    # 2. Create color bar for a skin tone list
     palette_bars = create_tone_palette_bar(report_image, tone_id, skin_tone_palette, bar_width)
 
-    # 3. Combine all bars and report image
     report_image = np.hstack([report_image, color_bars, palette_bars])
     msg_bar = create_message_bar(dmnt_colors, dmnt_pcts, tone_hex, distance, report_image.shape[1])
     report_image = np.vstack([report_image, msg_bar])

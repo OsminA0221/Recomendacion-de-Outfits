@@ -31,7 +31,6 @@ class AnalysisPipeline(threading.Thread):
         self._busy = False
         self.cycle_ms = 0.0
 
-    # ---- API para el hilo de la cámara --------------------------------
     def wants_frame(self) -> bool:
         """True si el worker está libre (evita copiar frames de más)."""
         return not self._busy and not self._frame_ready.is_set()
@@ -48,7 +47,6 @@ class AnalysisPipeline(threading.Thread):
         for a in self.analyzers:
             a.close()
 
-    # ---- hilo worker ---------------------------------------------------
     def run(self) -> None:
         while not self._stop_evt.is_set():
             self._frame_ready.wait()
@@ -62,7 +60,6 @@ class AnalysisPipeline(threading.Thread):
             self._busy = True
             t0 = time.perf_counter()
 
-            # Las 3 IAs a la vez sobre el mismo frame; se espera a las 3
             futures = {a.name: self._pool.submit(a.run, frame)
                        for a in self.analyzers}
             results = {name: f.result() for name, f in futures.items()}

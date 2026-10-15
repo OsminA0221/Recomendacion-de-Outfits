@@ -19,10 +19,8 @@ from profile_store import ANALYZER_NAMES, Profile, ProfileManager
 import sys
 from pathlib import Path
 
-# Sube un nivel desde 'Integracion' hacia 'IAs_Deteccion_Cuerpos'
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Ruta hacia la carpeta 'src' que contiene 'stone'
 RUTA_SRC_STONE = BASE_DIR / "Tonalidades_Piel" / "src"
 
 if str(RUTA_SRC_STONE) not in sys.path:
@@ -79,18 +77,23 @@ def draw_hud(frame, st, cycle_ms):
             put(frame, f"[X ] {LABELS[name]}: {r.reason}", y, RED)
         y += 24
 
-    # Cajas / puntos de lo detectado en el ultimo ciclo
     for name, color in (("somatotipo", (255, 128, 0)), ("piel", (255, 0, 255))):
         r = st.last_results.get(name)
         if r and r.ok:
             x1, y1, x2, y2 = r.data["bbox"]
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-    r = st.last_results.get("forma")
+        r = st.last_results.get("forma")
     if r and r.ok:
-        for pt in r.data["points"]:
-            cv2.circle(frame, pt, 4, (0, 0, 255), -1)
+        rows = (("hombros", (255, 0, 0)), ("cintura", (0, 255, 255)),
+                ("cadera", (255, 0, 255)))
+        for key, color in rows:
+            e = r.data["edges"].get(key)
+            if e:
+                cv2.line(frame, e[0], e[1], color, 3)
+                for pt in e:
+                    cv2.circle(frame, pt, 7, (255, 255, 255), -1)
+                    cv2.circle(frame, pt, 5, color, -1)
 
-    # Linea de estado (abajo)
     h = frame.shape[0]
     if st.state == "ESPERANDO":
         put(frame, "Esperando que las 3 IAs detecten bien...", h - 40, YELLOW, 0.6)
@@ -150,7 +153,6 @@ def main() -> int:
                 break
             frame = cv2.flip(frame, 1)
 
-            # Se analiza una copia; el dibujo de abajo no toca la original.
             if pipeline.wants_frame():
                 pipeline.submit(frame.copy())
 

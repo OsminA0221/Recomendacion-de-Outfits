@@ -68,13 +68,11 @@ def main() -> int:
 
                 break
 
-            # Efecto espejo.
             frame = cv2.flip(
                 frame,
                 1
             )
             
-            # 1. Obtener dimensiones para calcular píxeles reales
             alto_imagen, ancho_imagen, _ = frame.shape
 
             landmarks = detector.process(

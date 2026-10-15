@@ -87,7 +87,6 @@ def process_in_main(
             return_report_image=return_report_image,
         )
     except ArgumentError as e:
-        # Abort the app if any argument error occurs
         raise e
     except Exception as e:
         msg = f"Error processing image {filename_or_url}: {str(e)}"
@@ -100,7 +99,6 @@ def process_in_main(
 
 def main():
     args = build_arguments()
-    # Setup logger
     now = datetime.now()
     output_dir = args.output
     log_dir = os.path.join(output_dir, "./log")
@@ -142,7 +140,6 @@ def main():
 
     pool = Pool(processes=num_workers)
 
-    # Backup result.csv if exists
     if os.path.exists(result_filename):
         renamed_file = os.path.join(output_dir, now.strftime("./result_bak_%y%m%d%H%M.csv"))
         shutil.move(result_filename, renamed_file)
@@ -153,7 +150,6 @@ def main():
     )
     write_to_csv(header.split(","))
 
-    # Start
     process_wrapper = functools.partial(
         process if is_debugging() else process_in_main,
         image_type=image_type_setting,

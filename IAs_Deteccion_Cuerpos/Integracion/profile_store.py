@@ -51,7 +51,6 @@ def _mode(values: list):
 
 def _consensus(samples: list[dict]) -> tuple[dict, dict, dict]:
     """Une varias muestras en un resultado estable (moda / mediana)."""
-    # ---- forma corporal
     labels = [s["forma"]["label"] for s in samples]
     label = _mode(labels)
     same = [s["forma"] for s in samples if s["forma"]["label"] == label]
@@ -63,7 +62,6 @@ def _consensus(samples: list[dict]) -> tuple[dict, dict, dict]:
             statistics.median(f["waist_to_hip"] for f in same), 3),
     }
 
-    # ---- somatotipo
     label = _mode([s["somatotipo"]["label"] for s in samples])
     same = [s["somatotipo"] for s in samples if s["somatotipo"]["label"] == label]
     somato = {
@@ -71,7 +69,6 @@ def _consensus(samples: list[dict]) -> tuple[dict, dict, dict]:
         "confidence": round(statistics.mean(x["confidence"] for x in same), 3),
     }
 
-    # ---- tono de piel
     label = _mode([s["piel"]["label"] for s in samples])
     same = [s["piel"] for s in samples if s["piel"]["label"] == label]
     piel = {
@@ -108,7 +105,6 @@ class ProfileManager:
         self._last_good: Optional[float] = None
         self._last_results: dict = {}
 
-    # ------------------------------------------------------------------
     def update(self, results: dict[str, AnalyzerResult]) -> None:
         """Llamar una vez por ciclo con el resultado de las 3 IAs."""
         saved: Optional[Profile] = None
@@ -123,7 +119,6 @@ class ProfileManager:
                 self._last_good = now
                 self._samples.append(
                     (now, {k: r.data for k, r in results.items()}))
-                # Solo se conserva la ventana de estabilidad reciente
                 self._samples = [
                     (t, d) for t, d in self._samples if now - t <= self.stable
                 ]
@@ -184,7 +179,6 @@ class ProfileManager:
             return Status(state, progress, failing, self._profile,
                           expires_in, refresh_in, dict(self._last_results))
 
-    # ------------------------------------------------------------------
     def _reset_streak(self) -> None:
         self._streak_start = None
         self._last_good = None

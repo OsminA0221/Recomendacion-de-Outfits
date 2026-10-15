@@ -94,7 +94,6 @@ def build_image_paths(images_paths, recursive=False):
     paths = list(paths)
     if len(paths) == 0:
         raise FileNotFoundError("No valid images in the specified path.")
-    # Sort paths by (first) number extracted from the filename string
     paths.sort(key=sort_file)
     return paths
 
@@ -163,7 +162,6 @@ def build_arguments():
             nargs="+",
             metavar="Image Directories",
             widget="DirChooser",
-            # widget="MultiDirChooser", # fixme: enable this widget when issues are fixed
             gooey_options={
                 "message": "Select directories to process",
                 "initial_value": os.getcwd(),
@@ -383,7 +381,6 @@ def build_arguments():
             "--min_width",
             type=int,
             metavar="Minimum Width",
-            # help="Specify the minimum possible face width. Faces smaller than that are ignored, defaults to 90.",
             default=default_min_width,
             widget="IntegerField",
             gooey_options={"initial_value": default_min_width, "min": 10, "max": 99999},
@@ -393,7 +390,6 @@ def build_arguments():
             "--min_height",
             type=int,
             metavar="Minimum Height",
-            # help="Specify the minimum possible face height. Faces smaller than that are ignored, defaults to 90.",
             default=default_min_height,
             widget="IntegerField",
             gooey_options={"initial_value": default_min_height, "min": 10, "max": 99999},
