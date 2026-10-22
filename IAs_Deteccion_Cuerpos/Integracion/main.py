@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 import cv2
 
@@ -16,11 +17,11 @@ from analyzers import (
 from config import Config
 from pipeline import AnalysisPipeline
 from profile_store import ANALYZER_NAMES, Profile, ProfileManager
-import sys
-from pathlib import Path
 
+# Sube un nivel desde 'Integracion' hacia 'IAs_Deteccion_Cuerpos'
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Ruta hacia la carpeta 'src' que contiene 'stone'
 RUTA_SRC_STONE = BASE_DIR / "Tonalidades_Piel" / "src"
 
 if str(RUTA_SRC_STONE) not in sys.path:
@@ -28,7 +29,7 @@ if str(RUTA_SRC_STONE) not in sys.path:
 
 WINDOW = "Outfit AI - 3 IAs en paralelo"
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-GREEN, RED, YELLOW, WHITE = (0, 220, 0), (0, 0, 255), (0, 215, 255), (255, 255, 255)
+GREEN, RED, YELLOW, WHITE, CYAN = (0, 220, 0), (0, 0, 255), (0, 215, 255), (255, 255, 255), (255, 200, 0)
 
 LABELS = {"forma": "Forma", "somatotipo": "Somatotipo", "piel": "Piel"}
 
@@ -36,6 +37,9 @@ LABELS = {"forma": "Forma", "somatotipo": "Somatotipo", "piel": "Piel"}
 def parse_args(cfg: Config) -> Config:
     p = argparse.ArgumentParser(description="3 IAs en paralelo con camara en vivo")
     p.add_argument("--camera", type=int, default=cfg.camera_index)
+    p.add_argument("--gender", type=str, default=cfg.gender,
+                   choices=["Hombre", "Mujer", "hombre", "mujer", "h", "m"],
+                   help="Genero del usuario: Hombre o Mujer (default: Mujer)")
     p.add_argument("--stable", type=float, default=cfg.stable_seconds,
                    help="segundos de deteccion estable antes de guardar (2 o 5)")
     p.add_argument("--refresh", type=float, default=cfg.refresh_seconds,
@@ -43,7 +47,8 @@ def parse_args(cfg: Config) -> Config:
     p.add_argument("--ttl", type=float, default=cfg.ttl_seconds,
                    help="segundos que vive el perfil guardado")
     a = p.parse_args()
-    return replace(cfg, camera_index=a.camera, stable_seconds=a.stable,
+    g = "Hombre" if str(a.gender).strip().lower() in ("h", "hombre", "man", "male") else "Mujer"
+    return replace(cfg, camera_index=a.camera, gender=g, stable_seconds=a.stable,
                    refresh_seconds=a.refresh, ttl_seconds=a.ttl)
 
 
@@ -59,14 +64,19 @@ def put(frame, text, y, color=WHITE, scale=0.55):
 
 def short(data: dict, name: str) -> str:
     if name == "forma":
-        return f"{data['label']} (h/c {data['shoulder_to_hip']}, c/c {data['waist_to_hip']})"
+        g = data.get("gender", "")
+        g_tag = f"[{g}] " if g else ""
+        return f"{g_tag}{data['label']} (h/c {data['shoulder_to_hip']}, c/c {data['waist_to_hip']})"
     if name == "somatotipo":
         return f"{data['label']} {data['confidence'] * 100:.0f}%"
     return f"{data['label']} {data['skin_tone']} prec {data['accuracy']:.0f}"
 
 
 def draw_hud(frame, st, cycle_ms):
-    y = 24
+    # Indicador de Género activo y controles rápidos
+    put(frame, f"[ GENERO: {st.gender.upper()} ]  (Presiona H: Hombre | M: Mujer | G: Alternar)", 26, CYAN, 0.58)
+
+    y = 54
     for name in ANALYZER_NAMES:
         r = st.last_results.get(name)
         if r is None:
@@ -82,12 +92,13 @@ def draw_hud(frame, st, cycle_ms):
         if r and r.ok:
             x1, y1, x2, y2 = r.data["bbox"]
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        r = st.last_results.get("forma")
-    if r and r.ok:
+
+    r_forma = st.last_results.get("forma")
+    if r_forma and r_forma.ok and "edges" in r_forma.data:
         rows = (("hombros", (255, 0, 0)), ("cintura", (0, 255, 255)),
                 ("cadera", (255, 0, 255)))
         for key, color in rows:
-            e = r.data["edges"].get(key)
+            e = r_forma.data["edges"].get(key)
             if e:
                 cv2.line(frame, e[0], e[1], color, 3)
                 for pt in e:
@@ -105,12 +116,12 @@ def draw_hud(frame, st, cycle_ms):
             h - 40, YELLOW, 0.6)
     if st.profile is not None:
         p = st.profile
-        put(frame, f"Perfil: {p.forma['label']} | {p.somatotipo['label']} | "
+        put(frame, f"Perfil [{p.genero}]: {p.forma['label']} | {p.somatotipo['label']} | "
                    f"piel {p.piel['label']}", h - 64, GREEN, 0.6)
         put(frame, f"Expira en {fmt_time(st.expires_in)}  |  "
                    f"proximo guardado en {fmt_time(st.refresh_in)}",
             h - 16, WHITE, 0.5)
-    put(frame, f"ciclo IA: {cycle_ms:.0f} ms", 100, WHITE, 0.45)
+    put(frame, f"ciclo IA: {cycle_ms:.0f} ms", 130, WHITE, 0.45)
 
 
 def on_save(profile: Profile) -> None:
@@ -129,8 +140,9 @@ def main() -> int:
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     print("Cargando las 3 IAs (la primera vez puede tardar)...")
+    body_analyzer = BodyShapeAnalyzer(cfg.body_smoothing_alpha, gender=cfg.gender)
     analyzers = [
-        BodyShapeAnalyzer(cfg.body_smoothing_alpha),
+        body_analyzer,
         SomatotypeAnalyzer(SOMATO_WEIGHTS, cfg.min_somato_conf),
         SkinToneAnalyzer(cfg.min_skin_accuracy),
     ]
@@ -139,12 +151,15 @@ def main() -> int:
         refresh_seconds=cfg.refresh_seconds,
         stable_seconds=cfg.stable_seconds,
         error_grace_seconds=cfg.error_grace_seconds,
+        initial_gender=cfg.gender,
         on_save=on_save,
     )
     pipeline = AnalysisPipeline(analyzers, manager, cfg.analysis_period)
     pipeline.start()
 
-    print("Camara iniciada. q = salir | r = reiniciar | p = imprimir perfil")
+    print("Camara iniciada.")
+    print("  q = salir | r = reiniciar | p = imprimir perfil")
+    print("  h = seleccionar Hombre | m = seleccionar Mujer | g = alternar genero")
     try:
         while True:
             ok, frame = cap.read()
@@ -169,6 +184,21 @@ def main() -> int:
                 prof = manager.get_profile()
                 print(json.dumps(prof.to_dict(), indent=2, ensure_ascii=False)
                       if prof else "Aun no hay perfil guardado.")
+            if key in (ord("h"), ord("H")):
+                new_g = "Hombre"
+                manager.set_gender(new_g)
+                body_analyzer.set_gender(new_g)
+                print(f"[GENERO] Cambiado a: {new_g}")
+            if key in (ord("m"), ord("M")):
+                new_g = "Mujer"
+                manager.set_gender(new_g)
+                body_analyzer.set_gender(new_g)
+                print(f"[GENERO] Cambiado a: {new_g}")
+            if key in (ord("g"), ord("G")):
+                new_g = "Hombre" if manager.gender == "Mujer" else "Mujer"
+                manager.set_gender(new_g)
+                body_analyzer.set_gender(new_g)
+                print(f"[GENERO] Alternado a: {new_g}")
     finally:
         pipeline.shutdown()
         cap.release()

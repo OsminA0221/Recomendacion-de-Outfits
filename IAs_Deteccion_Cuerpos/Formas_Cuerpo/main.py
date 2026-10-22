@@ -48,9 +48,14 @@ def main() -> int:
         )
     )
 
+    current_gender = "Mujer"
+
     print(
-        "Camara iniciada. "
-        "Presiona 'q' para salir."
+        "Camara iniciada.\n"
+        "  q = salir\n"
+        "  h = cambiar a Hombre\n"
+        "  m = cambiar a Mujer\n"
+        "  g = alternar genero"
     )
 
     try:
@@ -96,7 +101,8 @@ def main() -> int:
 
                 shape_result = (
                     classify_body_shape(
-                        proportions
+                        proportions,
+                        gender=current_gender
                     )
                 )
 
@@ -124,11 +130,18 @@ def main() -> int:
                 frame
             )
 
-            if (
-                cv2.waitKey(1) & 0xFF
-                == ord("q")
-            ):
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
                 break
+            elif key in (ord("h"), ord("H")):
+                current_gender = "Hombre"
+                print(f"[GENERO] Cambiado a: {current_gender}")
+            elif key in (ord("m"), ord("M")):
+                current_gender = "Mujer"
+                print(f"[GENERO] Cambiado a: {current_gender}")
+            elif key in (ord("g"), ord("G")):
+                current_gender = "Hombre" if current_gender == "Mujer" else "Mujer"
+                print(f"[GENERO] Alternado a: {current_gender}")
 
     finally:
 

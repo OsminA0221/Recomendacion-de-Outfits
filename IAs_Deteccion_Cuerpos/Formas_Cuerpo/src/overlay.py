@@ -153,6 +153,9 @@ def draw_results(
 
     lines = [
 
+        f"Genero: "
+        f"{getattr(shape_result, 'gender', 'Mujer')} (Pulsa H/M)",
+
         f"Forma corporal: "
         f"{shape_result.label}",
 

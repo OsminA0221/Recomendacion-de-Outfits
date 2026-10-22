@@ -235,29 +235,59 @@ def _measure_true_hip_2d(
     torso_height: float
 ) -> tuple[Optional[float], Optional[float]]:
     """
-    Escanea desde la pelvis hasta la entrepierna para asegurar que 
-    encuentra el punto absolutamente más ancho de la cadera/glúteos.
+    Escanea la región anatómica de la cadera (cresta ilíaca a trocánter mayor)
+    para encontrar el ancho máximo representativo de la cadera/pelvis,
+    evitando descender hacia los muslos o la entrepierna.
     """
-    
-    start_y = pelvis_y
-    end_y = pelvis_y + (torso_height * 0.35)
+
+    # Escaneo centrado en la pelvis/hueso de la cadera:
+    # -8% por encima de los puntos de cadera (cresta ilíaca)
+    # +12% por debajo (trocánteres mayores / curva superior glútea)
+    start_y = pelvis_y - (torso_height * 0.08)
+    end_y = pelvis_y + (torso_height * 0.12)
 
     measurements = _sample_widths(
         detector,
         start_y,
         end_y,
-        samples_count=30
+        samples_count=21
     )
 
     if len(measurements) < 3:
-        return None, None
+        w = detector.measure_silhouette_width(pelvis_y)
+        return (w, pelvis_y) if w is not None else (None, None)
 
-    best_y, best_width = max(
+    smoothed = _smooth_width_curve(
         measurements,
-        key=lambda m: m[1]
+        window=3
     )
 
-    return best_width, best_y
+    max_width = max(w for _, w in smoothed)
+
+    # Para evitar que baje hacia los muslos si la silueta es recta o la ropa es holgada:
+    # consideramos los puntos dentro del 97% del máximo y elegimos el más cercano anatómicamente a pelvis_y.
+    candidates = [
+        (y, w) for y, w in smoothed if w >= max_width * 0.97
+    ]
+
+    best_y, _ = min(
+        candidates,
+        key=lambda item: abs(item[0] - pelvis_y)
+    )
+
+    best_idx = min(
+        range(len(smoothed)),
+        key=lambda i: abs(smoothed[i][0] - best_y)
+    )
+
+    neighborhood_radius = 2
+    start_idx = max(0, best_idx - neighborhood_radius)
+    end_idx = min(len(smoothed), best_idx + neighborhood_radius + 1)
+    neighborhood = smoothed[start_idx:end_idx]
+
+    avg_width = sum(w for _, w in neighborhood) / len(neighborhood)
+
+    return avg_width, best_y
 
 def compute_proportions(
     landmarks: BodyLandmarks,

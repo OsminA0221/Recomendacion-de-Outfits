@@ -19,9 +19,11 @@ class Profile:
     somatotipo: dict
     piel: dict
     saved_at: datetime
+    genero: str = "Mujer"
 
     def to_dict(self) -> dict:
         return {
+            "genero": self.genero,
             "forma_corporal": self.forma,
             "somatotipo": self.somatotipo,
             "tono_piel": self.piel,
@@ -38,6 +40,7 @@ class Status:
     expires_in: Optional[float]
     refresh_in: Optional[float]
     last_results: dict    # nombre -> AnalyzerResult (último ciclo)
+    gender: str = "Mujer"
 
 
 def _mode(values: list):
@@ -56,6 +59,7 @@ def _consensus(samples: list[dict]) -> tuple[dict, dict, dict]:
     same = [s["forma"] for s in samples if s["forma"]["label"] == label]
     forma = {
         "label": label,
+        "gender": same[-1].get("gender", "Mujer"),
         "shoulder_to_hip": round(
             statistics.median(f["shoulder_to_hip"] for f in same), 3),
         "waist_to_hip": round(
@@ -86,6 +90,7 @@ class ProfileManager:
         refresh_seconds: float,
         stable_seconds: float,
         error_grace_seconds: float,
+        initial_gender: str = "Mujer",
         on_save: Optional[Callable[[Profile], None]] = None,
         clock: Callable[[], float] = time.monotonic,
     ):
@@ -93,6 +98,7 @@ class ProfileManager:
         self.refresh = refresh_seconds
         self.stable = stable_seconds
         self.grace = error_grace_seconds
+        self.gender = initial_gender
         self._on_save = on_save
         self._clock = clock
 
@@ -104,6 +110,14 @@ class ProfileManager:
         self._streak_start: Optional[float] = None
         self._last_good: Optional[float] = None
         self._last_results: dict = {}
+
+    def set_gender(self, gender: str) -> None:
+        with self._lock:
+            if self.gender != gender:
+                self.gender = gender
+                self._profile = None
+                self._saved_at = None
+                self._reset_streak()
 
     def update(self, results: dict[str, AnalyzerResult]) -> None:
         """Llamar una vez por ciclo con el resultado de las 3 IAs."""
@@ -177,7 +191,8 @@ class ProfileManager:
                          else "REFRESCO_PENDIENTE")
 
             return Status(state, progress, failing, self._profile,
-                          expires_in, refresh_in, dict(self._last_results))
+                          expires_in, refresh_in, dict(self._last_results),
+                          gender=self.gender)
 
     def _reset_streak(self) -> None:
         self._streak_start = None
@@ -198,7 +213,7 @@ class ProfileManager:
             return None            # aún no toca refrescar
 
         forma, somato, piel = _consensus([d for _, d in self._samples])
-        self._profile = Profile(forma, somato, piel, datetime.now())
+        self._profile = Profile(forma, somato, piel, datetime.now(), genero=self.gender)
         self._saved_at = now
         self._reset_streak()       # el siguiente guardado exige margen nuevo
         return self._profile

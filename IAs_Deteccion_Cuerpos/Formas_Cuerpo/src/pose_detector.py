@@ -230,10 +230,10 @@ class PoseDetector:
                         and shoulder_y <= elbow_y <= hip_y + 0.1 * torso_px):
                     return self._invisible("baja los brazos (no los pongas en la cintura)")
 
-        # La medición de cadera escanea hasta ~35% del torso por debajo de
-        # los puntos de cadera: ahí debe haber imagen (muslos visibles).
-        if hip_y + 0.35 * torso_px > h_orig * 0.99:
-            return self._invisible("alejate un poco: debe verse hasta medio muslo")
+        # La medición de cadera escanea la región anatómica pélvica (~12% del torso
+        # por debajo de los puntos de cadera) sin invadir los muslos.
+        if hip_y + 0.12 * torso_px > h_orig * 0.99:
+            return self._invisible("alejate un poco: debe verse la cadera completa")
 
         # 4) LANDMARKS NORMALIZADOS
         def norm(x, y):

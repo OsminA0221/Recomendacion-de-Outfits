@@ -69,14 +69,13 @@ class BodyShapeAnalyzer(BaseAnalyzer):
     def __init__(
         self,
         smoothing_alpha: float,
+        gender: str = "Mujer",
         max_waist_to_hip: float = 1.15,
         shoulder_hip_range: tuple = (0.60, 1.70),
     ):
-        # Rangos fisicamente razonables. Fuera de ellos casi siempre es ropa
-        # holgada, brazos pegados al torso o puntos mal ubicados: mejor
-        # esperar una medicion buena que guardar una forma equivocada.
         self.max_waist_to_hip = max_waist_to_hip
         self.shoulder_hip_range = shoulder_hip_range
+        self.gender = gender
 
         # Formas_Cuerpo usa imports "from src...."; basta con tener su
         # carpeta en sys.path (no hace falta tocar sus archivos).
@@ -93,6 +92,9 @@ class BodyShapeAnalyzer(BaseAnalyzer):
         self._classify = classify_body_shape
         self.detector = PoseDetector()
         self.smoother = BodyMeasurementSmoother.create(alpha=smoothing_alpha)
+
+    def set_gender(self, gender: str) -> None:
+        self.gender = gender
 
     def analyze(self, frame) -> AnalyzerResult:
         landmarks = self.detector.process(frame)
@@ -113,17 +115,7 @@ class BodyShapeAnalyzer(BaseAnalyzer):
             self.smoother.reset()
             return _fail("no se pudo medir la silueta")
 
-        shape = self._classify(props)
-
-        # Mantener el comportamiento de la IA standalone (Formas_Cuerpo):
-        # no rechazar una deteccion solo porque cae fuera de rangos tan
-        # estrictos. En la version standalone la forma siempre intenta
-        # clasificarse con la geometria disponible; esa es la regla que
-        # queremos replicar aqui para que la integracion se comporte igual.
-        # Solo descartamos valores completamente no numericos o absurdos.
-        if not (float(shape.shoulder_to_hip_ratio) > 0 and float(shape.waist_to_hip_ratio) > 0):
-            self.smoother.reset()
-            return _fail("proporcion corporal invalida para clasificar")
+        shape = self._classify(props, gender=self.gender)
 
         # Extremos de la silueta (donde se mide) en pixeles, para dibujar
         # desde el hilo principal.
@@ -138,12 +130,13 @@ class BodyShapeAnalyzer(BaseAnalyzer):
 
         return _ok({
             "label": shape.label,
+            "gender": shape.gender,
             "shoulder_to_hip": shape.shoulder_to_hip_ratio,
             "waist_to_hip": shape.waist_to_hip_ratio,
             "edges": {
-                "hombros": to_px(props.shoulder_edges),
-                "cintura": to_px(props.waist_edges),
-                "cadera": to_px(props.hip_edges),
+                "hombros": to_px(getattr(props, "shoulder_edges", None)),
+                "cintura": to_px(getattr(props, "waist_edges", None)),
+                "cadera": to_px(getattr(props, "hip_edges", None)),
             },
         })
 
