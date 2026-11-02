@@ -1,190 +1,319 @@
-# Proyecto IA - Recomendación de vestimenta
+# Outfit AI: recomendación inteligente de vestimenta
 
-Sistema de inteligencia artificial orientado a la identificación de características físicas mediante cámara y su posterior utilización para generar recomendaciones de vestimenta personalizadas.
+Outfit AI es un sistema académico de visión artificial y estilismo que analiza una persona mediante cámara, identifica características físicas relevantes y recomienda prendas y conjuntos compatibles.
 
-## Descripción
+La aplicación combina tres modelos de detección independientes, un perfil corporal construido a partir de sus resultados y un motor explicable de recomendación basado en reglas. No utiliza una red neuronal para decidir los outfits; las sugerencias se generan a partir de forma corporal, somatotipo, tono de piel, género, estilo y compatibilidad visual.
 
-El proyecto busca desarrollar un sistema capaz de analizar diferentes características de una persona mediante visión por computadora y utilizar los resultados para determinar combinaciones de vestimenta adecuadas.
+## Objetivo
 
-El sistema se encuentra dividido en diferentes módulos de inteligencia artificial, permitiendo desarrollar y probar cada componente de manera independiente antes de integrarlos en una aplicación conjunta.
+El proyecto busca demostrar cómo diferentes técnicas de inteligencia artificial pueden integrarse para ofrecer una asistencia personalizada de vestimenta:
 
-## Módulos del proyecto
+1. Detectar puntos corporales desde video.
+2. Estimar proporciones, forma corporal y somatotipo.
+3. Identificar el tono de piel.
+4. Crear un perfil estable y consistente.
+5. Consultar el catálogo de prendas.
+6. Generar outfits completos.
+7. Mostrar las razones que explican cada recomendación.
 
-### 1. Detección de forma corporal
-
-Ubicación:
-
-`IAs_Deteccion_Cuerpos/Formas_Cuerpo/`
-
-Este módulo utiliza la cámara para detectar la postura corporal y obtener proporciones geométricas del cuerpo.
-
-Actualmente permite:
-
-* Detectar una persona mediante la cámara.
-* Obtener puntos de referencia corporales.
-* Calcular proporciones corporales.
-* Suavizar las mediciones obtenidas.
-* Clasificar la forma corporal.
-* Mostrar los resultados en tiempo real.
-
-### 2. Detección de tonalidad de piel
-
-Ubicación:
-
-`Tonalidades_Piel/`
-
-Este módulo utiliza una cámara para detectar el rostro y estimar la tonalidad de piel.
-
-Actualmente permite:
-
-* Capturar imágenes mediante la cámara.
-* Detectar rostros.
-* Obtener colores dominantes de la piel.
-* Clasificar la tonalidad.
-* Mostrar la tonalidad y precisión obtenidas en tiempo real.
-
-Este módulo utiliza como base la librería
-`ChenglongMa/SkinToneClassifier`.
-
-### 3. Clasificación de somatotipo
-
-Ubicación:
-
-`IA_Somatotipo/`
-
-Este módulo se encuentra en desarrollo y estará orientado a la clasificación del somatotipo corporal.
-
-## Arquitectura
-
-Cada módulo de inteligencia artificial mantiene su propio entorno virtual de Python para evitar conflictos entre versiones y dependencias.
+## Funcionamiento general
 
 ```text
-Proyecto IA
-│
-├── IAs_Deteccion_Cuerpos
-│   └── Formas_Cuerpo
-│       ├── src
-│       ├── main.py
-│       └── venv
-│
-├── Tonalidades_Piel
-│   ├── src
-│   ├── app
-│   └── venv
-│
-└── IA_Somatotipo
-    └── venv
+Cámara
+  │
+  ├── MediaPipe + reglas geométricas → forma corporal
+  ├── YOLOv8 → somatotipo
+  └── OpenCV + SkinToneClassifier → tono de piel
+                         │
+                         ▼
+                 Perfil del usuario
+                         │
+                         ▼
+         Motor de recomendación por reglas
+                         │
+                         ▼
+             Prendas, outfit y explicación
 ```
 
-## Tecnologías
+Cada IA recibe el mismo cuadro de video, pero conserva su propio estado y modelo. Los resultados se procesan en paralelo y se combinan mediante `ProfileManager`, que aplica estabilidad temporal y consenso antes de generar una recomendación.
 
-* Python
-* OpenCV
-* MediaPipe
-* NumPy
-* SkinToneClassifier
-* Visión por computadora
+## Aplicación principal
 
-## Requisitos
+La aplicación integrada se encuentra en:
 
-Se recomienda utilizar Python 3.12.
-
-Cada módulo posee sus propias dependencias y debe ejecutarse utilizando su respectivo entorno virtual.
-
-## Instalación
-
-Clonar el repositorio:
-
-```bash
-git clone URL_DEL_REPOSITORIO
+```text
+IAs_Deteccion_Cuerpos/Integracion/main.py
 ```
 
-Entrar al módulo que se desea utilizar y crear/activar su entorno virtual.
+Ejecuta los tres analizadores en tiempo real, consolida el perfil y abre una ventana separada con los outfits recomendados.
 
-Ejemplo:
-
-```bash
-cd IAs_Deteccion_Cuerpos/Formas_Cuerpo
-py -3.12 -m venv venv
-```
-
-Activar el entorno:
+Desde la raíz del proyecto:
 
 ```powershell
-.\venv\Scripts\Activate.ps1
+python .\IAs_Deteccion_Cuerpos\Integracion\main.py
 ```
 
-Instalar las dependencias:
+### Controles
 
-```bash
-pip install -r requirements.txt
-```
+| Tecla | Acción |
+|---|---|
+| `q` | Salir |
+| `r` | Reiniciar el perfil actual |
+| `p` | Mostrar el perfil en consola |
+| `h` | Seleccionar género Hombre |
+| `m` | Seleccionar género Mujer |
+| `g` | Alternar género |
+| `e` | Cambiar estilo |
+| `o` | Recalcular outfits |
 
-Para la detección de tonalidad de piel:
-
-```bash
-cd Tonalidades_Piel
-py -3.12 -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -e .
-```
-
-## Ejecución
+## Componentes principales
 
 ### Detección de forma corporal
 
-Desde:
+Ubicación:
 
 ```text
 IAs_Deteccion_Cuerpos/Formas_Cuerpo/
 ```
 
-ejecutar:
+Utiliza MediaPipe Pose para localizar hombros, cintura y caderas. Los puntos se utilizan para calcular relaciones corporales, suavizar mediciones y clasificar formas como reloj de arena, triángulo, triángulo invertido, rectángulo y óvalo.
 
-```bash
-python main.py
-```
+Componentes destacados:
 
-### Tonalidad de piel
+- `src/pose_detector.py`
+- `src/body_measurements.py`
+- `src/body_shape_classifier.py`
+- `src/overlay.py`
+- `main.py`
 
-Desde:
+### Clasificación del somatotipo
 
-```text
-Tonalidades_Piel/
-```
-
-ejecutar:
-
-```bash
-python app/camera_skin_tone.py
-```
-
-Para finalizar la ejecución de la cámara se puede presionar:
+Ubicación:
 
 ```text
-Q
+IAs_Deteccion_Cuerpos/SomatoSense/
 ```
 
-## Organización de los entornos
+SomatoSense utiliza un detector YOLOv8 para clasificar el tipo somático visible y proporciona una etiqueta con nivel de confianza:
 
-Cada IA utiliza un entorno virtual independiente.
+- Ectomorfo
+- Mesomorfo
+- Endomorfo
 
-Esto permite que las versiones de OpenCV, MediaPipe y otras dependencias puedan ser administradas de manera independiente y evita conflictos entre los módulos.
+El integrador carga los pesos `SomatoSense/best.pt` y ejecuta la clasificación sobre cada cuadro recibido desde OpenCV.
 
-## Licencias y atribuciones
+### Clasificación del tono de piel
 
-Este proyecto utiliza componentes y librerías de terceros. Cada componente mantiene las condiciones de licencia correspondientes a su proyecto original.
+Ubicación:
 
-La funcionalidad de clasificación de tonalidad de piel utiliza como base:
+```text
+IAs_Deteccion_Cuerpos/Tonalidades_Piel/
+```
 
-**SkinToneClassifier — ChenglongMa**
+Detecta el rostro, extrae muestras de color y compara la tonalidad con una paleta predefinida. El resultado incluye una etiqueta, un color representativo en formato hexadecimal y una precisión estimada.
 
-Repositorio original:
+El módulo utiliza como base el proyecto externo `ChenglongMa/SkinToneClassifier`.
 
-https://github.com/ChenglongMa/SkinToneClassifier
+### Integración en tiempo real
 
-Se mantienen las atribuciones y condiciones de licencia correspondientes al código de terceros utilizado.
+Ubicación:
 
-## Autores
+```text
+IAs_Deteccion_Cuerpos/Integracion/
+```
 
-Proyecto desarrollado como parte de un proyecto académico de inteligencia artificial y visión por computadora.
+Contiene la orquestación concurrente de las tres IA:
+
+- `main.py`: aplicación por cámara.
+- `analyzers.py`: adaptadores y ciclos de ejecución.
+- `pipeline.py`: procesamiento paralelo.
+- `profile_store.py`: estabilidad, consenso y vigencia del perfil.
+- `config.py`: configuración de cámara, umbrales y tiempos.
+
+### Motor de recomendación
+
+Ubicación:
+
+```text
+Recomendaciones/
+```
+
+El motor transforma el perfil obtenido por las IA en recomendaciones de prendas y outfits.
+
+Componentes:
+
+- `recomendador.py`: evaluación de prendas y combinaciones.
+- `reglas.py`: compatibilidad entre formas, cortes, somatotipos y ajustes.
+- `colores.py`: compatibilidad de colores con el tono de piel.
+- `visual.py`: creación de collages.
+- `preparar_dataset.py`: limpieza y normalización del catálogo.
+- `prueba_sin_camara.py`: prueba reproducible con perfiles simulados.
+
+## Prueba sin cámara
+
+La prueba sin cámara permite validar el motor con perfiles conocidos, sin depender de detección visual ni hardware:
+
+```powershell
+python -m Recomendaciones.prueba_sin_camara
+```
+
+La prueba genera tres outfits por perfil y guarda collages en:
+
+```text
+Recomendaciones/salida/
+```
+
+## Catálogo y formatos
+
+El motor utiliza:
+
+- `data/prendas.csv`: catálogo fuente.
+- `data/prendas_limpio.csv`: catálogo normalizado.
+- `data/Imagenes/`: imágenes asociadas a las prendas.
+
+Cada prenda contiene categoría, género, estilo, corte, ajuste, color, patrón e identificador de imagen.
+
+Antes de ejecutar recomendaciones, puede regenerarse el catálogo limpio:
+
+```powershell
+python -m Recomendaciones.preparar_dataset
+```
+
+## Criterios de recomendación
+
+El puntaje combina reglas editables y explicables:
+
+```text
+Forma corporal × corte
+Somatotipo × ajuste
+Tono de piel × color
+Estilo solicitado × estilo de la prenda
+Compatibilidad entre prendas
+Armonía de colores
+```
+
+Los pesos predeterminados son:
+
+| Factor | Peso |
+|---|---:|
+| Forma corporal | 35% |
+| Somatotipo | 20% |
+| Color | 30% |
+| Estilo | 15% |
+
+Los zapatos ignoran forma y somatotipo porque dependen principalmente del estilo y la armonía visual. Los pesos pueden reemplazarse mediante un archivo `Recomendaciones/pesos.json`.
+
+## Modelos utilizados
+
+El recomendador actual no utiliza ningún modelo neuronal para ordenar outfits. Las recomendaciones provienen exclusivamente del motor basado en reglas descrito anteriormente.
+
+Los modelos conservados se utilizan para detección: YOLOv8 clasifica el somatotipo, MediaPipe obtiene puntos corporales y SkinToneClassifier analiza el tono de piel. Los datasets históricos de entrenamiento ya no forman parte de la ejecución funcional.
+
+## Tecnologías
+
+- Python
+- OpenCV
+- MediaPipe
+- Ultralytics YOLOv8
+- PyTorch
+- NumPy
+- Pandas
+- Flask
+- SkinToneClassifier
+
+## Proyectos externos utilizados
+
+### MediaPipe
+
+Proporciona la detección de postura y puntos corporales.
+
+- Proyecto: `google-ai-edge/mediapipe`
+- URL: https://github.com/google-ai-edge/mediapipe
+
+### Ultralytics YOLO
+
+Proporciona la infraestructura de detección y clasificación utilizada por SomatoSense.
+
+- Proyecto: `ultralytics/ultralytics`
+- URL: https://github.com/ultralytics/ultralytics
+
+### SkinToneClassifier
+
+Proporciona la base de análisis y clasificación de tonalidad de piel utilizada por el módulo correspondiente.
+
+- Proyecto: `ChenglongMa/SkinToneClassifier`
+- URL: https://github.com/ChenglongMa/SkinToneClassifier
+
+Cada componente externo conserva su licencia y derechos originales. Deben revisarse sus condiciones antes de distribuir una versión final o comercial.
+
+## Requisitos
+
+Se recomienda Python 3.12 en Windows. Los componentes utilizan entornos virtuales independientes para evitar conflictos entre versiones.
+
+Entornos disponibles:
+
+```text
+IAs_Deteccion_Cuerpos/Formas_Cuerpo/venv/
+IAs_Deteccion_Cuerpos/SomatoSense/venv/
+IAs_Deteccion_Cuerpos/Tonalidades_Piel/venv/
+IAs_Deteccion_Cuerpos/Integracion/venv/
+```
+
+Dependencias generales del integrador:
+
+- OpenCV
+- NumPy
+- Pandas
+- PyTorch
+- Ultralytics
+- MediaPipe
+- Matplotlib
+- SkinToneClassifier
+
+El integrador define sus dependencias instaladas en:
+
+```text
+IAs_Deteccion_Cuerpos/Integracion/requirements.txt
+```
+
+## Instalación
+
+Crear y activar un entorno para el integrador:
+
+```powershell
+py -3.12 -m venv IAs_Deteccion_Cuerpos\Integracion\venv
+IAs_Deteccion_Cuerpos\Integracion\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r IAs_Deteccion_Cuerpos\Integracion\requirements.txt
+```
+
+Instalar el módulo local de tonalidad si aún no está disponible:
+
+```powershell
+pip install -e .\IAs_Deteccion_Cuerpos\Tonalidades_Piel
+```
+
+## Consideraciones de uso
+
+- Mantener la persona de cuerpo completo dentro de la cámara para medir hombros, cintura y caderas.
+- Mantener buena iluminación frontal.
+- Mirar hacia la cámara para facilitar la detección del rostro y el tono de piel.
+- Evitar fondo confuso, ropa holgada extrema y movimientos rápidos.
+- Las etiquetas son estimaciones y no deben interpretarse como mediciones clínicas.
+- La forma corporal puede variar según género, postura y configuración de medición.
+
+## Alcance actual
+
+Actualmente el proyecto incluye:
+
+- Captura en tiempo real mediante cámara.
+- Detección de forma corporal.
+- Clasificación de somatotipo.
+- Clasificación de tono de piel.
+- Perfil consensuado con estabilidad temporal.
+- Motor explicable de recomendación.
+- Catálogo normalizado de prendas.
+- Generación de outfits completos.
+- Soporte para Hombre y Mujer.
+- Cambio de estilo por teclado.
+- Prueba reproducible sin cámara.

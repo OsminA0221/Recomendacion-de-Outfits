@@ -24,3 +24,9 @@ __pycache__/
 # Pruebas con imágenes
 test_images/*
 !test_images/.gitkeep
+
+#Dataset
+data/*
+
+# Recomendaciones
+Recomendaciones/salida/

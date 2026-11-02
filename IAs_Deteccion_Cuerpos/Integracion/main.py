@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -27,7 +28,18 @@ RUTA_SRC_STONE = BASE_DIR / "Tonalidades_Piel" / "src"
 if str(RUTA_SRC_STONE) not in sys.path:
     sys.path.insert(0, str(RUTA_SRC_STONE))
 
+# Raiz del proyecto (contiene data/ y Recomendaciones/) para poder importar
+# el paquete Recomendaciones.
+RAIZ = BASE_DIR.parent
+if str(RAIZ) not in sys.path:
+    sys.path.insert(0, str(RAIZ))
+
+from Recomendaciones import Recomendador, perfil_desde_dict   # noqa: E402
+from Recomendaciones.visual import crear_collage              # noqa: E402
+
 WINDOW = "Outfit AI - 3 IAs en paralelo"
+WINDOW_OUTFITS = "Outfits recomendados"
+ESTILOS = [None, "casual", "elegante", "formal", "deportivo", "streetwear"]
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 GREEN, RED, YELLOW, WHITE, CYAN = (0, 220, 0), (0, 0, 255), (0, 215, 255), (255, 255, 255), (255, 200, 0)
 
@@ -139,6 +151,27 @@ def main() -> int:
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
+    print("Cargando recomendador...")
+    rec = Recomendador()
+    lock = threading.Lock()
+    estado = {"outfits": None, "perfil_dict": None, "estilo_idx": 0, "nuevo": False}
+
+    def recalcular(perfil_dict: dict) -> None:
+        """Perfil de las 3 IAs -> outfits; el hilo principal los dibuja."""
+        try:
+            outfits = rec.recomendar_outfits(
+                perfil_desde_dict(perfil_dict), n=4,
+                estilo=ESTILOS[estado["estilo_idx"]])
+        except Exception as exc:   # un error aqui no debe tumbar el analisis
+            print(f"[RECOMENDADOR] error: {type(exc).__name__}: {exc}")
+            return
+        with lock:
+            estado.update(perfil_dict=perfil_dict, outfits=outfits, nuevo=True)
+
+    def on_save_y_recomendar(profile: Profile) -> None:
+        on_save(profile)                      # imprime el JSON como antes
+        recalcular(profile.to_dict())
+
     print("Cargando las 3 IAs (la primera vez puede tardar)...")
     body_analyzer = BodyShapeAnalyzer(cfg.body_smoothing_alpha, gender=cfg.gender)
     analyzers = [
@@ -152,7 +185,7 @@ def main() -> int:
         stable_seconds=cfg.stable_seconds,
         error_grace_seconds=cfg.error_grace_seconds,
         initial_gender=cfg.gender,
-        on_save=on_save,
+        on_save=on_save_y_recomendar,
     )
     pipeline = AnalysisPipeline(analyzers, manager, cfg.analysis_period)
     pipeline.start()
@@ -160,6 +193,8 @@ def main() -> int:
     print("Camara iniciada.")
     print("  q = salir | r = reiniciar | p = imprimir perfil")
     print("  h = seleccionar Hombre | m = seleccionar Mujer | g = alternar genero")
+    print("  e = cambiar estilo (todos/casual/elegante/formal/deportivo/streetwear)")
+    print("  o = recalcular outfits")
     try:
         while True:
             ok, frame = cap.read()
@@ -173,6 +208,12 @@ def main() -> int:
 
             draw_hud(frame, manager.status(), pipeline.cycle_ms)
             cv2.imshow(WINDOW, frame)
+            # Los outfits se dibujan aqui (cv2.imshow solo en el hilo principal)
+            with lock:
+                hay_nuevo, outfits = estado["nuevo"], estado["outfits"]
+                estado["nuevo"] = False
+            if hay_nuevo:
+                cv2.imshow(WINDOW_OUTFITS, crear_collage(outfits))
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
@@ -199,6 +240,17 @@ def main() -> int:
                 manager.set_gender(new_g)
                 body_analyzer.set_gender(new_g)
                 print(f"[GENERO] Alternado a: {new_g}")
+            if key in (ord("e"), ord("E")):
+                estado["estilo_idx"] = (estado["estilo_idx"] + 1) % len(ESTILOS)
+                print(f"[ESTILO] {ESTILOS[estado['estilo_idx']] or 'todos'}")
+                if estado["perfil_dict"]:
+                    recalcular(estado["perfil_dict"])
+            if key in (ord("o"), ord("O")):
+                prof = manager.get_profile()
+                if prof:
+                    recalcular(prof.to_dict())
+                else:
+                    print("Aun no hay perfil guardado.")
     finally:
         pipeline.shutdown()
         cap.release()
