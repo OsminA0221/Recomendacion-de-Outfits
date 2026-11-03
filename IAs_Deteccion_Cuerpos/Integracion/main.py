@@ -246,6 +246,8 @@ def main() -> int:
                 break
             if key == ord("r"):
                 manager.clear()
+                with lock:
+                    estado["perfil_dict"] = None
                 print("Perfil descartado.")
             if key == ord("p"):
                 prof = manager.get_profile()
@@ -255,16 +257,22 @@ def main() -> int:
                 new_g = "Hombre"
                 manager.set_gender(new_g)
                 body_analyzer.set_gender(new_g)
+                with lock:
+                    estado["perfil_dict"] = None
                 print(f"[GENERO] Cambiado a: {new_g}")
             if key in (ord("m"), ord("M")):
                 new_g = "Mujer"
                 manager.set_gender(new_g)
                 body_analyzer.set_gender(new_g)
+                with lock:
+                    estado["perfil_dict"] = None
                 print(f"[GENERO] Cambiado a: {new_g}")
             if key in (ord("g"), ord("G")):
                 new_g = "Hombre" if manager.gender == "Mujer" else "Mujer"
                 manager.set_gender(new_g)
                 body_analyzer.set_gender(new_g)
+                with lock:
+                    estado["perfil_dict"] = None
                 print(f"[GENERO] Alternado a: {new_g}")
             if key in (ord("e"), ord("E")):
                 estado["estilo_idx"] = (estado["estilo_idx"] + 1) % len(ESTILOS)

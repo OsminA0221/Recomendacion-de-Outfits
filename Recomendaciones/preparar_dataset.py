@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .colores import COLOR_ES, COLOR_HEX
+from .colores import COLOR_ES, COLOR_HEX, nombre_color_es
 
 DATA = Path(__file__).resolve().parents[1] / "data"   # <raiz>/data
 CSV_ENTRADA = DATA / "prendas.csv"
@@ -44,7 +44,10 @@ def main() -> int:
     # 5) COLOR: nombre -> HEX (esto es lo que faltaba para comparar con la piel)
     df["color_nombre"] = df["colour_group_name"]
     df["color_hex"] = df["colour_group_name"].map(COLOR_HEX)
-    df["color_es"] = df["perceived_colour_master_name"].map(COLOR_ES).fillna("desconocido")
+    respaldo_es = df["perceived_colour_master_name"].map(COLOR_ES).fillna("desconocido")
+    df["color_es"] = [
+        nombre_color_es(cn, ce) for cn, ce in zip(df["color_nombre"], respaldo_es)
+    ]
     df["patron"] = df["graphical_appearance_name"]
 
     # 6) ruta de imagen valida en cualquier sistema operativo
