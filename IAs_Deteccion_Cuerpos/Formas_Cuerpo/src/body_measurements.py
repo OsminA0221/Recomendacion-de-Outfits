@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from typing import Optional
 
@@ -40,6 +40,13 @@ class BodyProportions:
     waist_edges: Optional[tuple] = None
     hip_edges: Optional[tuple] = None
 
+    # Métricas geométricas adicionales para distinguir torso recto/atlético de óvalo real:
+    # - waist_to_shoulder_ratio: cintura / hombros (clave cuando hombros > cadera).
+    # - torso_convexity: relación máxima entre el ancho medio/abdominal y la recta
+    #   hombro-cadera (>1.05 indica prominencia convexa real; <=1.01 indica caída recta o cóncava).
+    waist_to_shoulder_ratio: float = 0.0
+    torso_convexity: float = 1.0
+
 
 class TemporalSmoother:
     """
@@ -79,12 +86,13 @@ class TemporalSmoother:
 @dataclass
 class BodyMeasurementSmoother:
     """
-    Mantiene estabilidad temporal de las tres medidas principales.
+    Mantiene estabilidad temporal de las medidas principales y la convexidad del torso.
     """
 
     shoulder: TemporalSmoother
     waist: TemporalSmoother
     hip: TemporalSmoother
+    convexity: TemporalSmoother = field(default_factory=lambda: TemporalSmoother(0.20))
 
     @classmethod
     def create(cls, alpha: float = 0.20):
@@ -92,12 +100,14 @@ class BodyMeasurementSmoother:
             shoulder=TemporalSmoother(alpha),
             waist=TemporalSmoother(alpha),
             hip=TemporalSmoother(alpha),
+            convexity=TemporalSmoother(alpha),
         )
 
     def reset(self):
         self.shoulder.reset()
         self.waist.reset()
         self.hip.reset()
+        self.convexity.reset()
 
 
 def _sample_widths(
@@ -140,7 +150,7 @@ def _smooth_width_curve(
     Suaviza espacialmente la curva ancho-Y.
 
     Esto evita que un solo píxel o una pequeña irregularidad
-    de la máscara sea interpretada como la cadera.
+    de la máscara sea interpretada como hombro, cintura o cadera.
     """
 
     if len(measurements) < 3:
@@ -166,6 +176,38 @@ def _smooth_width_curve(
     return smoothed
 
 
+def _measure_shoulder_width_2d(
+    detector: PoseDetector,
+    shoulder_y: float,
+    torso_height: float
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    Mide el ancho bi-deltoideo justo en la corona del hombro (shoulder_y a +5% del torso)
+    usando la mediana local para no inflar hombros si los brazos se abren más abajo.
+    """
+    start_y = shoulder_y - (torso_height * 0.01)
+    end_y = shoulder_y + (torso_height * 0.05)
+    target_y = shoulder_y + (torso_height * 0.02)
+
+    measurements = _sample_widths(
+        detector,
+        start_y,
+        end_y,
+        samples_count=9
+    )
+
+    if len(measurements) < 3:
+        w = detector.measure_silhouette_width(shoulder_y)
+        return (w, shoulder_y) if w is not None else (None, None)
+
+    smoothed = _smooth_width_curve(measurements, window=3)
+    widths_sorted = sorted(w for _, w in smoothed)
+    median_width = widths_sorted[len(widths_sorted) // 2]
+
+    best_y, _ = min(smoothed, key=lambda item: (abs(item[1] - median_width), abs(item[0] - target_y)))
+    return median_width, best_y
+
+
 def _measure_waist_width_2d(
     detector: PoseDetector,
     shoulder_y: float,
@@ -173,25 +215,24 @@ def _measure_waist_width_2d(
     torso_height: float
 ) -> tuple[Optional[float], Optional[float]]:
     """
-    Busca la cintura como una zona estrecha dentro de la región
-    entre hombros y cadera.
-
-    Se evita utilizar un único mínimo porque un error aislado
-    de segmentación podría generar una cintura artificialmente
-    pequeña.
+    Busca la cintura natural dentro de la región anatómica entre costillas bajas
+    y cresta ilíaca superior (36% a 78% del torso), evitando bajar hasta la cadera
+    en cuerpos en V donde el mínimo global caería sobre la propia pelvis.
     """
 
-    start_y = shoulder_y + torso_height * 0.35
-    end_y = hip_y - torso_height * 0.05
+    start_y = shoulder_y + torso_height * 0.43
+    end_y = shoulder_y + torso_height * 0.78
+    if end_y >= hip_y - torso_height * 0.12:
+        end_y = hip_y - torso_height * 0.12
 
     measurements = _sample_widths(
         detector,
         start_y,
         end_y,
-        samples_count=21
+        samples_count=19
     )
 
-    if len(measurements) < 7:
+    if len(measurements) < 5:
         return None, None
 
     measurements = _smooth_width_curve(
@@ -228,6 +269,47 @@ def _measure_waist_width_2d(
     ) / len(neighborhood)
 
     return avg_width, measurements[min_index][0]
+
+
+def _compute_torso_convexity(
+    detector: PoseDetector,
+    shoulder_y: float,
+    torso_height: float,
+    shoulder_width: float,
+    hip_width: float,
+) -> float:
+    """
+    Mide si la zona media/abdominal sobresale de forma CONVEXA respecto a la
+    línea recta que une el ancho de hombros con el ancho de cadera.
+
+    - <= 1.00 : silueta cóncava o recta (reloj de arena, trapecio, rectángulo con camiseta).
+    - >= 1.05 : prominencia convexa real en abdomen/zona media (óvalo / manzana).
+    """
+    if shoulder_width <= 0 or hip_width <= 0 or torso_height <= 0:
+        return 1.0
+
+    start_y = shoulder_y + torso_height * 0.44
+    end_y = shoulder_y + torso_height * 0.84
+    raw = _sample_widths(detector, start_y, end_y, samples_count=15)
+    if len(raw) < 5:
+        return 1.0
+
+    smoothed = _smooth_width_curve(raw, window=5)
+    ratios = []
+    for y, w in smoothed:
+        t = float(np.clip((y - shoulder_y) / torso_height, 0.0, 1.0))
+        expected_linear = (1.0 - t) * shoulder_width + t * hip_width
+        if expected_linear > 1e-6:
+            ratios.append(w / expected_linear)
+
+    if not ratios:
+        return 1.0
+
+    # Percentil alto suavizado para evitar picos aislados de un solo renglón
+    ratios.sort()
+    top_slice = ratios[max(0, len(ratios) - 3):]
+    return float(sum(top_slice) / len(top_slice))
+
 
 def _measure_true_hip_2d(
     detector: PoseDetector,
@@ -289,6 +371,7 @@ def _measure_true_hip_2d(
 
     return avg_width, best_y
 
+
 def compute_proportions(
     landmarks: BodyLandmarks,
     detector: Optional[PoseDetector] = None,
@@ -299,11 +382,10 @@ def compute_proportions(
 
     El sistema utiliza:
 
-    - landmarks para localizar regiones anatómicas;
-    - segmentación para obtener los anchos reales de la silueta;
-    - varias secciones horizontales;
-    - suavizado espacial;
-    - suavizado temporal.
+    - landmarks para localizar regiones anatómicas y aislar los brazos;
+    - segmentación para obtener los anchos reales del torso/pelvis;
+    - varias secciones horizontales con suavizado espacial y temporal;
+    - convexidad de la zona media respecto a la línea hombro-cadera.
 
     Si la silueta no está disponible, utiliza landmarks como respaldo.
     """
@@ -323,12 +405,12 @@ def compute_proportions(
         landmarks.right_ankle
     )
 
-    shoulder_y = shoulder_mid[1]
-    hip_y = hip_mid[1]
+    raw_shoulder_y = shoulder_mid[1]
+    raw_hip_y = hip_mid[1]
 
     # La cintura no tiene landmark propio.
     waist_y = (
-        shoulder_y + hip_y
+        raw_shoulder_y + raw_hip_y
     ) / 2
 
     torso_height = _euclidean(
@@ -358,28 +440,31 @@ def compute_proportions(
     shoulder_width = fallback_shoulder_width
     hip_width = fallback_hip_width
     waist_width = fallback_waist_width
+    shoulder_y = raw_shoulder_y
+    hip_y = raw_hip_y
+    torso_convexity = 0.92
 
     measured_from_silhouette = False
     shoulder_edges = waist_edges = hip_edges = None
 
     if detector is not None:
 
-        silhouette_shoulder = (
-            detector.measure_silhouette_width(
-                shoulder_y
-            )
+        silhouette_shoulder, new_shoulder_y = _measure_shoulder_width_2d(
+            detector,
+            raw_shoulder_y,
+            torso_height
         )
 
         silhouette_waist, waist_row_y = _measure_waist_width_2d(
             detector,
-            shoulder_y,
-            hip_y,
+            raw_shoulder_y,
+            raw_hip_y,
             torso_height
         )
 
         silhouette_hip, new_hip_y = _measure_true_hip_2d(
             detector,
-            hip_y,
+            raw_hip_y,
             torso_height
         )
 
@@ -388,14 +473,22 @@ def compute_proportions(
             silhouette_hip,
             silhouette_waist
         ):
-
-            shoulder_width = silhouette_shoulder
+            # El borde externo deltoideo nunca puede ser menor que la distancia entre centros articulares
+            shoulder_width = max(silhouette_shoulder, fallback_shoulder_width * 1.04)
             hip_width = silhouette_hip
             waist_width = silhouette_waist
-            
-            hip_y = new_hip_y
 
+            shoulder_y = new_shoulder_y
+            hip_y = new_hip_y
             waist_y = waist_row_y
+
+            torso_convexity = _compute_torso_convexity(
+                detector,
+                raw_shoulder_y,
+                torso_height,
+                shoulder_width,
+                hip_width,
+            )
 
             shoulder_edges = detector.silhouette_edges(shoulder_y)
             waist_edges = detector.silhouette_edges(waist_row_y)
@@ -423,6 +516,12 @@ def compute_proportions(
             )
         )
 
+        torso_convexity = (
+            smoother.convexity.update(
+                torso_convexity
+            )
+        )
+
     shoulder_to_hip_ratio = _safe_ratio(
         shoulder_width,
         hip_width
@@ -431,6 +530,11 @@ def compute_proportions(
     waist_to_hip_ratio = _safe_ratio(
         waist_width,
         hip_width
+    )
+
+    waist_to_shoulder_ratio = _safe_ratio(
+        waist_width,
+        shoulder_width
     )
 
     torso_to_height_ratio = _safe_ratio(
@@ -459,6 +563,9 @@ def compute_proportions(
         shoulder_edges=shoulder_edges,
         waist_edges=waist_edges,
         hip_edges=hip_edges,
+
+        waist_to_shoulder_ratio=waist_to_shoulder_ratio,
+        torso_convexity=torso_convexity,
     )
 
 

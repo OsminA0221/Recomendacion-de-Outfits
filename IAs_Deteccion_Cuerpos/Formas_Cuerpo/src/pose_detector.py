@@ -48,6 +48,7 @@ ARM_FLARE_MAX = 0.6
 KP_NOSE = 0
 KP_L_SHOULDER, KP_R_SHOULDER = 5, 6
 KP_L_ELBOW, KP_R_ELBOW = 7, 8
+KP_L_WRIST, KP_R_WRIST = 9, 10
 KP_L_HIP, KP_R_HIP = 11, 12
 KP_L_ANKLE, KP_R_ANKLE = 15, 16
 
@@ -100,8 +101,8 @@ class PoseDetector:
     def __init__(self):
         # Dos modelos YOLO que se complementan:
         #   - yolov8n-seg:  silueta (máscara) de la persona -> mide los anchos.
-        #   - yolov8n-pose: puntos reales del cuerpo (hombros, caderas...)
-        #                   -> dice DÓNDE medir.
+        #   - yolov8s-pose: puntos reales del cuerpo (hombros, codos, muñecas, caderas...)
+        #                   -> dice DÓNDE medir y permite separar los brazos del torso.
         # Se descargan automáticamente la primera vez (~6 MB cada uno).
         print("Cargando modelos Ultralytics YOLOv8-Seg + YOLOv8-Pose...")
         _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -114,17 +115,137 @@ class PoseDetector:
 
         self._last_segmentation_mask = None
         self._last_landmarks_px = None
+        self._spine_pts = None          # ((sh_mid_x, sh_y), (hp_mid_x, hp_y)) en px
         self.last_issue = ""            # motivo legible del último rechazo
         self._prev_kxy = None           # para suavizar puntos entre frames
         self._prev_conf = None
 
     def _invisible(self, reason: str = "no se ven bien hombros y caderas") -> BodyLandmarks:
         self._last_landmarks_px = []   # para que no se dibujen puntos
+        self._spine_pts = None
         self.last_issue = reason
         self._prev_kxy = None
         self._prev_conf = None
         z = (0, 0)
         return BodyLandmarks(z, z, z, z, z, z, z, visibility_ok=False)
+
+    @staticmethod
+    def _carve_arms_from_torso(
+        mask_2d: np.ndarray,
+        kxy: np.ndarray,
+        kconf: np.ndarray,
+        shoulder_y: float,
+        hip_y: float,
+        torso_px: float,
+        shoulder_w_px: float,
+    ) -> None:
+        """Separa los brazos colgantes de la máscara del torso por debajo de la axila.
+
+        yolov8n-seg genera máscaras de baja resolución que suelen pegar los brazos
+        y mangas a la cintura/cadera, haciendo que la cintura mida de codo a codo
+        y clasificando erróneamente casi todo cuerpo como 'Óvalo'.
+        """
+        h, w = mask_2d.shape[:2]
+        y_cut = int(np.clip(shoulder_y + 0.24 * torso_px, 0, h - 1))
+        if y_cut >= h - 1:
+            return
+
+        sh_mid_x = 0.5 * (kxy[KP_L_SHOULDER][0] + kxy[KP_R_SHOULDER][0])
+        hp_mid_x = 0.5 * (kxy[KP_L_HIP][0] + kxy[KP_R_HIP][0])
+        torso_mid_x = 0.5 * (sh_mid_x + hp_mid_x)
+
+        # Radio anatómico estimado del brazo respecto al ancho bi-articular de hombros.
+        # En vez de borrar un tubo grueso (que podría morder cintura o cadera), trazamos
+        # una hendidura fina de separación (4 px) justo en el pliegue interno del brazo
+        # (arm_center - 0.85 * r_arm); luego _main_segment toma únicamente el bloque
+        # central del torso e ignora por completo el brazo separado.
+        r_arm = max(5.0, 0.125 * shoulder_w_px)
+        slit_offset = 0.82 * r_arm
+
+        # Bordes externos reales a nivel del hombro para anclar el eje superior del brazo
+        sh_row_idx = int(np.clip(shoulder_y, 0, h - 1))
+        sh_cols = np.where(mask_2d[sh_row_idx] > 0)[0]
+        sh_left_edge = float(sh_cols[0]) if sh_cols.size >= 2 else float(min(kxy[KP_L_SHOULDER][0], kxy[KP_R_SHOULDER][0]))
+        sh_right_edge = float(sh_cols[-1]) if sh_cols.size >= 2 else float(max(kxy[KP_L_SHOULDER][0], kxy[KP_R_SHOULDER][0]))
+
+        arm_chains = (
+            (KP_L_SHOULDER, KP_R_SHOULDER, KP_L_HIP, KP_L_ELBOW, KP_L_WRIST),
+            (KP_R_SHOULDER, KP_L_SHOULDER, KP_R_HIP, KP_R_ELBOW, KP_R_WRIST),
+        )
+
+        for sh_i, other_sh_i, hp_i, el_i, wr_i in arm_chains:
+            if kconf[el_i] < 0.30:
+                continue
+            outward = 1.0 if kxy[sh_i][0] > kxy[other_sh_i][0] else -1.0
+            el_pt = kxy[el_i]
+
+            # Solo separar el brazo si cuelga hacia afuera del eje central
+            if (el_pt[0] - torso_mid_x) * outward < 0.35 * shoulder_w_px:
+                continue
+
+            side_mask = np.zeros_like(mask_2d)
+
+            # Centro del brazo superior a nivel del deltoides (no la articulación clavicular interna)
+            sh_edge = sh_right_edge if outward > 0 else sh_left_edge
+            sh_arm_cx = sh_edge - outward * (0.72 * r_arm)
+            sh_crease = np.array([sh_arm_cx - outward * slit_offset, shoulder_y])
+            el_crease = np.array([el_pt[0] - outward * slit_offset, el_pt[1]])
+
+            cv2.line(
+                side_mask,
+                (int(round(sh_crease[0])), int(round(sh_crease[1]))),
+                (int(round(el_crease[0])), int(round(el_crease[1]))),
+                1,
+                thickness=4,
+            )
+
+            if kconf[wr_i] >= 0.30:
+                wr_pt = kxy[wr_i]
+                if (wr_pt[0] - torso_mid_x) * outward >= 0.30 * shoulder_w_px:
+                    wr_crease = np.array([wr_pt[0] - outward * (0.78 * r_arm), wr_pt[1]])
+                    hand_crease = wr_crease + 0.45 * (wr_crease - el_crease)
+                    cv2.line(
+                        side_mask,
+                        (int(round(el_crease[0])), int(round(el_crease[1]))),
+                        (int(round(hand_crease[0])), int(round(hand_crease[1]))),
+                        1,
+                        thickness=4,
+                    )
+            else:
+                down_crease = np.array([el_crease[0], min(h - 1, hip_y + 0.20 * torso_px)])
+                cv2.line(
+                    side_mask,
+                    (int(round(el_crease[0])), int(round(el_crease[1]))),
+                    (int(round(down_crease[0])), int(round(down_crease[1]))),
+                    1,
+                    thickness=4,
+                )
+
+            # Proteger el núcleo del torso por regiones anatómicas:
+            # - En cintura (arriba de la cresta ilíaca): resguardo estrecho para permitir
+            #   separar brazos pegados incluso en siluetas Pera / Reloj de arena.
+            # - En cadera/pelvis: resguardo más amplio anclado a la articulación de cadera
+            #   para que muñecas/manos nunca recorten el ancho real de cadera.
+            hip_zone_y = int(np.clip(hip_y - 0.12 * torso_px, y_cut, h - 1))
+            waist_guard_x = int(round(0.32 * shoulder_w_px))
+            hip_guard_x = int(round(
+                max(
+                    (kxy[hp_i][0] - torso_mid_x) * outward + 0.14 * shoulder_w_px,
+                    0.36 * shoulder_w_px,
+                )
+            ))
+            if outward > 0:
+                lim_waist = min(w, int(round(torso_mid_x)) + waist_guard_x)
+                lim_hip = min(w, int(round(torso_mid_x)) + hip_guard_x)
+                side_mask[y_cut:hip_zone_y, :lim_waist] = 0
+                side_mask[hip_zone_y:, :lim_hip] = 0
+            else:
+                lim_waist = max(0, int(round(torso_mid_x)) - waist_guard_x)
+                lim_hip = max(0, int(round(torso_mid_x)) - hip_guard_x)
+                side_mask[y_cut:hip_zone_y, lim_waist:] = 0
+                side_mask[hip_zone_y:, lim_hip:] = 0
+
+            mask_2d[y_cut:][side_mask[y_cut:] > 0] = 0
 
     def process(self, frame_bgr: np.ndarray) -> Optional[BodyLandmarks]:
         h_orig, w_orig = frame_bgr.shape[:2]
@@ -138,6 +259,7 @@ class PoseDetector:
                 or seg.masks is None or len(seg.masks) == 0):
             self._last_segmentation_mask = None
             self._last_landmarks_px = None
+            self._spine_pts = None
             self._prev_kxy = None
             self._prev_conf = None
             self.last_issue = "no se detecta una persona"
@@ -152,13 +274,13 @@ class PoseDetector:
         contour = np.array(seg.masks.xy[main_idx], dtype=np.int32)
         if len(contour) > 0:
             cv2.fillPoly(mask_2d, [contour], 1)
-        self._last_segmentation_mask = mask_2d.astype(np.float32)
 
         # 2) POSE: puntos reales del cuerpo de ESA misma persona
         pose = self.pose_model(frame_in, verbose=False)[0]
 
         if (pose.keypoints is None or pose.boxes is None
                 or len(pose.boxes) == 0):
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible()
 
         pose_boxes = pose.boxes.xyxy.cpu().numpy()
@@ -166,6 +288,7 @@ class PoseDetector:
         # la máscara elegida (evita mezclar a dos personas distintas).
         best = max(range(len(pose_boxes)), key=lambda i: _iou(pose_boxes[i], main_box))
         if _iou(pose_boxes[best], main_box) < 0.3:
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible("no coinciden la silueta y los puntos del cuerpo")
 
         kxy = pose.keypoints.xy.cpu().numpy()[best]              # (17, 2) en px
@@ -189,8 +312,10 @@ class PoseDetector:
 
         # 3) VALIDACIÓN: ¿se ven bien hombros y caderas?
         if any(kconf[i] < SHOULDER_MIN_CONF for i in (KP_L_SHOULDER, KP_R_SHOULDER)):
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible("no se ven bien los hombros (mas luz, de frente)")
         if any(kconf[i] < HIP_MIN_CONF for i in (KP_L_HIP, KP_R_HIP)):
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible("no se ven bien las caderas (mas luz, muestra hasta medio muslo)")
 
         shoulder_y = (kxy[KP_L_SHOULDER][1] + kxy[KP_R_SHOULDER][1]) / 2
@@ -200,40 +325,67 @@ class PoseDetector:
         # Las caderas deben estar debajo de los hombros y el torso debe
         # tener un tamaño mínimo (si no, la persona está demasiado lejos).
         if torso_px < h_orig * 0.10:
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible("acercate: el torso se ve muy pequeno")
 
         # PLAUSIBILIDAD: descarta puntos de cadera mal ubicados (muy arriba,
         # sobre las rodillas, desnivelados...) en lugar de medir con ellos.
         shoulder_w_px = abs(kxy[KP_R_SHOULDER][0] - kxy[KP_L_SHOULDER][0])
         if shoulder_w_px < 1:
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible("no se ven bien los hombros (mas luz, de frente)")
         torso_ratio = torso_px / shoulder_w_px
         if not (TORSO_TO_SHOULDER_MIN <= torso_ratio <= TORSO_TO_SHOULDER_MAX):
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible("puntos del cuerpo inconsistentes (mejora la luz)")
         tilt_limit = MAX_TILT_FRACTION * torso_px
         if (abs(kxy[KP_L_HIP][1] - kxy[KP_R_HIP][1]) > tilt_limit
                 or abs(kxy[KP_L_SHOULDER][1] - kxy[KP_R_SHOULDER][1]) > tilt_limit):
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible("hombros o caderas muy desnivelados (ponte derecho)")
 
-        # Manos en la cintura / codos abiertos: falsean el ancho de la cintura.
+        torso_mid_x = 0.25 * (
+            kxy[KP_L_SHOULDER][0] + kxy[KP_R_SHOULDER][0]
+            + kxy[KP_L_HIP][0] + kxy[KP_R_HIP][0]
+        )
+
+        # Manos en la cintura / codos abiertos / brazos cruzados frente al abdomen:
         if REJECT_FLARED_ARMS:
-            for sh_i, other_i, elbow_i in (
-                (KP_L_SHOULDER, KP_R_SHOULDER, KP_L_ELBOW),
-                (KP_R_SHOULDER, KP_L_SHOULDER, KP_R_ELBOW),
+            for sh_i, other_i, elbow_i, wrist_i in (
+                (KP_L_SHOULDER, KP_R_SHOULDER, KP_L_ELBOW, KP_L_WRIST),
+                (KP_R_SHOULDER, KP_L_SHOULDER, KP_R_ELBOW, KP_R_WRIST),
             ):
-                if kconf[elbow_i] < 0.4:
-                    continue
-                outward = 1.0 if raw_kxy[sh_i][0] > raw_kxy[other_i][0] else -1.0
-                flare = (raw_kxy[elbow_i][0] - raw_kxy[sh_i][0]) * outward
-                elbow_y = raw_kxy[elbow_i][1]
-                if (flare > ARM_FLARE_MAX * shoulder_w_px
-                        and shoulder_y <= elbow_y <= hip_y + 0.1 * torso_px):
-                    return self._invisible("baja los brazos (no los pongas en la cintura)")
+                if kconf[elbow_i] >= 0.4:
+                    outward = 1.0 if raw_kxy[sh_i][0] > raw_kxy[other_i][0] else -1.0
+                    flare = (raw_kxy[elbow_i][0] - raw_kxy[sh_i][0]) * outward
+                    elbow_y = raw_kxy[elbow_i][1]
+                    if (flare > ARM_FLARE_MAX * shoulder_w_px
+                            and shoulder_y <= elbow_y <= hip_y + 0.1 * torso_px):
+                        self._last_segmentation_mask = mask_2d.astype(np.float32)
+                        return self._invisible("baja los brazos (no los pongas en la cintura)")
+
+                if kconf[wrist_i] >= 0.45:
+                    wx, wy = raw_kxy[wrist_i]
+                    if (shoulder_y + 0.25 * torso_px <= wy <= hip_y + 0.05 * torso_px
+                            and abs(wx - torso_mid_x) < 0.32 * shoulder_w_px):
+                        self._last_segmentation_mask = mask_2d.astype(np.float32)
+                        return self._invisible("deja los brazos sueltos a los lados")
 
         # La medición de cadera escanea la región anatómica pélvica (~12% del torso
         # por debajo de los puntos de cadera) sin invadir los muslos.
         if hip_y + 0.12 * torso_px > h_orig * 0.99:
+            self._last_segmentation_mask = mask_2d.astype(np.float32)
             return self._invisible("alejate un poco: debe verse la cadera completa")
+
+        # Separar brazos colgantes de la silueta del torso antes de medir cintura y cadera
+        self._carve_arms_from_torso(
+            mask_2d, kxy, kconf, shoulder_y, hip_y, torso_px, shoulder_w_px
+        )
+        self._last_segmentation_mask = mask_2d.astype(np.float32)
+
+        sh_mid_x = 0.5 * (kxy[KP_L_SHOULDER][0] + kxy[KP_R_SHOULDER][0])
+        hp_mid_x = 0.5 * (kxy[KP_L_HIP][0] + kxy[KP_R_HIP][0])
+        self._spine_pts = ((sh_mid_x, shoulder_y), (hp_mid_x, hip_y))
 
         # 4) LANDMARKS NORMALIZADOS
         def norm(x, y):
@@ -281,9 +433,21 @@ class PoseDetector:
             visibility_ok=True,
         )
 
+    def _expected_center_col(self, row_idx: int, w: int) -> Optional[int]:
+        """Columna X esperada del eje central del torso en la fila dada."""
+        if self._spine_pts is None:
+            return None
+        (sx, sy), (hx, hy) = self._spine_pts
+        if abs(hy - sy) < 1.0:
+            return int(np.clip(0.5 * (sx + hx), 0, w - 1))
+        t = float(np.clip((row_idx - sy) / (hy - sy), -0.2, 1.3))
+        cx = sx + t * (hx - sx)
+        return int(np.clip(round(cx), 0, w - 1))
+
     def _main_segment(self, y_normalized: float, threshold: float = 0.5):
-        """Columnas (izquierda, derecha) del bloque central más grueso de la
-        silueta en esa fila. Descarta partes separadas (brazos separados)."""
+        """Columnas (izquierda, derecha) del bloque del torso en esa fila.
+        Separa cualquier hueco real (>2-3 px) entre brazo y cintura y prioriza
+        el segmento que contiene el eje central del cuerpo."""
         mask = self._last_segmentation_mask
         if mask is None:
             return None
@@ -296,29 +460,45 @@ class PoseDetector:
         if person_cols.size < 2:
             return None
 
+        # Antes estaba fijo en gaps > 20, lo que unía brazos separados hasta por 20 px
+        # de aire con la cintura. Ahora cualquier separación real (>2-3 px) divide.
+        max_gap = max(2, int(round(w * 0.003)))
         gaps = np.diff(person_cols)
-        split_positions = np.where(gaps > 20)[0]
+        split_positions = np.where(gaps > max_gap)[0]
 
         segments = []
         start = 0
         for split in split_positions:
             segment = person_cols[start:split + 1]
-            if segment.size > 0:
+            if segment.size >= 2:
                 segments.append(segment)
             start = split + 1
 
         segment = person_cols[start:]
-        if segment.size > 0:
+        if segment.size >= 2:
             segments.append(segment)
 
         if not segments:
             return None
 
-        main_segment = max(segments, key=len)
-        if main_segment.size < 2:
-            return None
+        center_col = self._expected_center_col(row_idx, w)
+        if center_col is not None:
+            # Elegir el segmento que cubre el eje espinal (o el más cercano a él si es suficientemente ancho)
+            containing = [s for s in segments if s[0] <= center_col <= s[-1]]
+            if containing:
+                main_segment = max(containing, key=len)
+                return int(main_segment[0]), int(main_segment[-1])
 
-        return int(main_segment.min()), int(main_segment.max())
+            viable = [s for s in segments if len(s) >= max(6, int(w * 0.02))]
+            if viable:
+                main_segment = min(
+                    viable,
+                    key=lambda s: min(abs(int(s[0]) - center_col), abs(int(s[-1]) - center_col)),
+                )
+                return int(main_segment[0]), int(main_segment[-1])
+
+        main_segment = max(segments, key=len)
+        return int(main_segment[0]), int(main_segment[-1])
 
     def measure_silhouette_width(
         self,
