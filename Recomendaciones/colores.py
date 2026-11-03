@@ -43,6 +43,21 @@ COLOR_ES = {
     "Turquoise": "turquesa", "Unknown": "desconocido", "undefined": "desconocido",
 }
 
+# Colores disponibles para que el usuario haga una preferencia.
+COLORES_PREFERIDOS = [
+    "ninguno", "negro", "blanco", "gris", "beige", "cafe", "azul",
+    "verde", "rojo", "rosa", "naranja", "amarillo", "morado", "lila",
+    "turquesa", "topo",
+]
+
+_HEX_FAMILIA = {
+    "negro": "#111111", "blanco": "#FFFFFF", "gris": "#808080",
+    "beige": "#D8C3A5", "cafe": "#8B6B3E", "azul": "#2E5DA8",
+    "verde": "#2E8B57", "rojo": "#C8102E", "rosa": "#E57FA0",
+    "naranja": "#E8731F", "amarillo": "#F2CD2B", "morado": "#7B3FA0",
+    "lila": "#C4A8E0", "turquesa": "#1FB5B0", "topo": "#A38A63",
+}
+
 
 # --------------------------------------------------------------------------
 # 2) HEX -> RGB -> CIELAB
@@ -154,15 +169,75 @@ def armonia_colores(c1: Optional[ColorInfo], c2: Optional[ColorInfo]) -> float:
     if c1 is None or c2 is None:
         return 0.7
     if c1.temp == "neutro" and c2.temp == "neutro":
-        return 1.0
+        return 0.96 if c1.hex != c2.hex else 0.68
     if c1.temp == "neutro" or c2.temp == "neutro":
-        return 0.95   # un neutro combina con casi todo
+        color = c2 if c1.temp == "neutro" else c1
+        if color.C < 20:
+            return 0.96
+        contraste = abs(c1.L - c2.L)
+        return 0.96 if contraste >= 12 else 0.88
+
     dh = abs(c1.h - c2.h)
     dh = min(dh, 360 - dh)
     if dh <= 30:
-        return 1.0    # monocromatico
+        return 0.78 if abs(c1.L - c2.L) < 5 else 0.88
     if dh <= 70:
-        return 0.85   # analogo
+        return 0.94
+    if 100 <= dh <= 140:
+        return 0.86
     if dh >= 150:
-        return 0.7    # complementario (fuerte, pero valido)
+        return 0.92
     return 0.5        # zona que suele chocar
+
+
+def puntaje_preferencia_color(
+    color: Optional[ColorInfo],
+    preferencia: Optional[str],
+) -> float:
+    """Mide cuanto se acerca una prenda al color preferido, sin ignorar la piel."""
+    preferencia = str(preferencia).strip().lower() if preferencia else ""
+    if not preferencia or preferencia == "ninguno" or color is None:
+        return 0.5
+
+    objetivo = _HEX_FAMILIA.get(preferencia)
+    if objetivo is None:
+        return 0.5
+
+    objetivo_info = info_color(objetivo)
+    if objetivo_info is None:
+        return 0.5
+
+    L, a, b = color.L, 0.0, 0.0
+    _, a_obj, b_obj = rgb_a_lab(hex_a_rgb(objetivo))
+    # El nombre seleccionado representa una familia; comparamos tonalidad y
+    # luminosidad para permitir azul marino, azul claro, etc.
+    L_obj, _, _ = rgb_a_lab(hex_a_rgb(objetivo))
+    L_diff = abs(L - L_obj) / 100.0
+    hue_diff = abs(color.h - objetivo_info.h)
+    hue_diff = min(hue_diff, 360 - hue_diff) / 180.0
+
+    if preferencia in {"negro", "blanco", "gris", "beige", "cafe", "topo"}:
+        return round(max(0.5, 1.0 - 0.7 * L_diff), 4)
+    return round(max(0.45, 1.0 - 0.75 * hue_diff - 0.25 * L_diff), 4)
+
+
+def familia_color(color: Optional[ColorInfo]) -> str:
+    """Agrupa tonos para detectar repeticion cromatica dentro de un outfit."""
+    if color is None or color.temp == "neutro":
+        return "neutro"
+    h = color.h
+    if h < 15 or h >= 345:
+        return "rojo"
+    if h < 45:
+        return "naranja"
+    if h < 70:
+        return "amarillo"
+    if h < 165:
+        return "verde"
+    if h < 200:
+        return "turquesa"
+    if h < 255:
+        return "azul"
+    if h < 290:
+        return "morado"
+    return "rosa"

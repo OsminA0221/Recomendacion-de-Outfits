@@ -34,12 +34,13 @@ RAIZ = BASE_DIR.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-from Recomendaciones import Recomendador, perfil_desde_dict   # noqa: E402
+from Recomendaciones import COLORES_PREFERIDOS, Recomendador, perfil_desde_dict   # noqa: E402
 from Recomendaciones.visual import crear_collage              # noqa: E402
 
 WINDOW = "Outfit AI - 3 IAs en paralelo"
 WINDOW_OUTFITS = "Outfits recomendados"
 ESTILOS = [None, "casual", "elegante", "formal", "deportivo", "streetwear"]
+OCASIONES = [None, "casual", "elegante", "formal", "playa", "frio", "deportivo", "streetwear"]
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 GREEN, RED, YELLOW, WHITE, CYAN = (0, 220, 0), (0, 0, 255), (0, 215, 255), (255, 255, 255), (255, 200, 0)
 
@@ -84,9 +85,16 @@ def short(data: dict, name: str) -> str:
     return f"{data['label']} {data['skin_tone']} prec {data['accuracy']:.0f}"
 
 
-def draw_hud(frame, st, cycle_ms):
+def draw_hud(frame, st, cycle_ms, estado):
     # Indicador de Género activo y controles rápidos
     put(frame, f"[ GENERO: {st.gender.upper()} ]  (Presiona H: Hombre | M: Mujer | G: Alternar)", 26, CYAN, 0.58)
+
+    estilo = ESTILOS[estado["estilo_idx"]] or "todos"
+    ocasion = OCASIONES[estado["ocasion_idx"]] or "todos"
+    color = COLORES_PREFERIDOS[estado["color_idx"]].capitalize()
+    put(frame, f"[ ESTILO: {estilo.upper()} ]  (E para cambiar)", 156, CYAN, 0.55)
+    put(frame, f"[ OCASION: {ocasion.upper()} ]  (X para cambiar)", 180, CYAN, 0.55)
+    put(frame, f"[ COLOR: {color.upper()} ]  (C para cambiar)", 204, CYAN, 0.55)
 
     y = 54
     for name in ANALYZER_NAMES:
@@ -154,14 +162,19 @@ def main() -> int:
     print("Cargando recomendador...")
     rec = Recomendador()
     lock = threading.Lock()
-    estado = {"outfits": None, "perfil_dict": None, "estilo_idx": 0, "nuevo": False}
+    estado = {
+        "outfits": None, "perfil_dict": None, "estilo_idx": 0,
+        "ocasion_idx": 0, "color_idx": 0, "nuevo": False,
+    }
 
     def recalcular(perfil_dict: dict) -> None:
         """Perfil de las 3 IAs -> outfits; el hilo principal los dibuja."""
         try:
             outfits = rec.recomendar_outfits(
                 perfil_desde_dict(perfil_dict), n=4,
-                estilo=ESTILOS[estado["estilo_idx"]])
+                estilo=ESTILOS[estado["estilo_idx"]],
+                ocasion=OCASIONES[estado["ocasion_idx"]],
+                color_preferido=COLORES_PREFERIDOS[estado["color_idx"]])
         except Exception as exc:   # un error aqui no debe tumbar el analisis
             print(f"[RECOMENDADOR] error: {type(exc).__name__}: {exc}")
             return
@@ -194,6 +207,8 @@ def main() -> int:
     print("  q = salir | r = reiniciar | p = imprimir perfil")
     print("  h = seleccionar Hombre | m = seleccionar Mujer | g = alternar genero")
     print("  e = cambiar estilo (todos/casual/elegante/formal/deportivo/streetwear)")
+    print("  x = cambiar ocasion (todos/casual/elegante/formal/playa/frio/deportivo/streetwear)")
+    print("  c = cambiar color preferido")
     print("  o = recalcular outfits")
     try:
         while True:
@@ -206,7 +221,14 @@ def main() -> int:
             if pipeline.wants_frame():
                 pipeline.submit(frame.copy())
 
-            draw_hud(frame, manager.status(), pipeline.cycle_ms)
+            draw_hud(frame, manager.status(), pipeline.cycle_ms, estado)
+            estilo = ESTILOS[estado["estilo_idx"]] or "todos"
+            ocasion = OCASIONES[estado["ocasion_idx"]] or "todos"
+            color = COLORES_PREFERIDOS[estado["color_idx"]]
+            cv2.setWindowTitle(
+                WINDOW,
+                f"{WINDOW} | Estilo: {estilo} | Ocasion: {ocasion} | Color: {color}",
+            )
             cv2.imshow(WINDOW, frame)
             # Los outfits se dibujan aqui (cv2.imshow solo en el hilo principal)
             with lock:
@@ -214,6 +236,10 @@ def main() -> int:
                 estado["nuevo"] = False
             if hay_nuevo:
                 cv2.imshow(WINDOW_OUTFITS, crear_collage(outfits))
+                cv2.setWindowTitle(
+                    WINDOW_OUTFITS,
+                    f"{WINDOW_OUTFITS} | Estilo: {estilo} | Ocasion: {ocasion} | Color: {color}",
+                )
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
@@ -243,6 +269,16 @@ def main() -> int:
             if key in (ord("e"), ord("E")):
                 estado["estilo_idx"] = (estado["estilo_idx"] + 1) % len(ESTILOS)
                 print(f"[ESTILO] {ESTILOS[estado['estilo_idx']] or 'todos'}")
+                if estado["perfil_dict"]:
+                    recalcular(estado["perfil_dict"])
+            if key in (ord("x"), ord("X")):
+                estado["ocasion_idx"] = (estado["ocasion_idx"] + 1) % len(OCASIONES)
+                print(f"[OCASION] {OCASIONES[estado['ocasion_idx']] or 'todos'}")
+                if estado["perfil_dict"]:
+                    recalcular(estado["perfil_dict"])
+            if key in (ord("c"), ord("C")):
+                estado["color_idx"] = (estado["color_idx"] + 1) % len(COLORES_PREFERIDOS)
+                print(f"[COLOR] {COLORES_PREFERIDOS[estado['color_idx']]}")
                 if estado["perfil_dict"]:
                     recalcular(estado["perfil_dict"])
             if key in (ord("o"), ord("O")):

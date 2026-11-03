@@ -14,17 +14,18 @@ from __future__ import annotations
 
 import itertools
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-from .colores import (armonia_colores, info_color, perfil_piel,
-                     puntaje_color_piel)
+from .colores import (armonia_colores, familia_color, info_color, perfil_piel,
+                     puntaje_color_piel, puntaje_preferencia_color)
 from .reglas import (AJUSTE_POR_SOMATOTIPO, CATEGORIAS_SIN_CUERPO,
                     CORTE_POR_FORMA, PESO_PIEZA, PESOS_DEFECTO,
-                    SIN_ESTAMPADO, compat_estilo, norm)
+                    SIN_ESTAMPADO, compat_estilo, norm, puntaje_ocasion)
 
 AQUI = Path(__file__).resolve().parent      # carpeta Recomendaciones/
 RAIZ = AQUI.parent                           # raiz del proyecto (donde esta data/)
@@ -96,7 +97,13 @@ class Recomendador:
         confianza = min(1.0, p.somato_conf / 0.6)
         return 0.5 + (s - 0.5) * confianza
 
-    def puntuar(self, perfil: PerfilUsuario, estilo: Optional[str] = None) -> pd.DataFrame:
+    def puntuar(
+        self,
+        perfil: PerfilUsuario,
+        estilo: Optional[str] = None,
+        ocasion: Optional[str] = None,
+        color_preferido: Optional[str] = None,
+    ) -> pd.DataFrame:
         """Devuelve las prendas del genero del usuario con todos los puntajes."""
         d = self.df[self.df["genero"] == perfil.genero].copy()
         piel = perfil_piel(perfil.piel_hex)
@@ -104,21 +111,31 @@ class Recomendador:
         d["s_forma"] = d["corte"].apply(lambda c: self._s_forma(perfil, c))
         d["s_somato"] = d["ajuste"].apply(lambda a: self._s_somato(perfil, a))
         d["s_color"] = d["color_info"].apply(lambda c: puntaje_color_piel(c, piel))
-        if estilo:
+        d["s_preferencia"] = d["color_info"].apply(
+            lambda c: puntaje_preferencia_color(c, color_preferido))
+        if estilo and estilo.lower() in {"casual", "elegante", "formal", "deportivo", "streetwear"}:
             d["s_estilo"] = (d["estilo"] == estilo.lower()).astype(float)
         else:
             d["s_estilo"] = 0.5
+        if ocasion:
+            d["s_estilo"] = d.apply(
+                lambda r: puntaje_ocasion(r["estilo"], r["subcategoria"], norm(ocasion)),
+                axis=1,
+            )
 
         # pesos por fila (calzado ignora cuerpo; sin estilo se reparte el peso)
         pesos = pd.DataFrame(self.pesos, index=d.index)
         sin_cuerpo = d["categoria"].isin(CATEGORIAS_SIN_CUERPO)
         pesos.loc[sin_cuerpo, ["forma", "somato"]] = 0.0
-        if not estilo:
+        if not estilo and not ocasion:
             pesos["estilo"] = 0.0
+        if color_preferido and norm(color_preferido) != "ninguno":
+            pesos["preferencia"] = 0.20
         pesos = pesos.div(pesos.sum(axis=1), axis=0)
 
         d["score"] = (pesos["forma"] * d["s_forma"] + pesos["somato"] * d["s_somato"]
-                      + pesos["color"] * d["s_color"] + pesos["estilo"] * d["s_estilo"])
+                      + pesos["color"] * d["s_color"] + pesos["estilo"] * d["s_estilo"]
+                      + pesos.get("preferencia", 0) * d["s_preferencia"])
         d.attrs["piel"] = piel
         return d.sort_values("score", ascending=False)
 
@@ -126,8 +143,10 @@ class Recomendador:
     # recomendar prendas sueltas
     # ------------------------------------------------------------------
     def recomendar_prendas(self, perfil: PerfilUsuario, categoria: Optional[str] = None,
-                           n: int = 10, estilo: Optional[str] = None) -> list[dict]:
-        d = self.puntuar(perfil, estilo)
+                           n: int = 10, estilo: Optional[str] = None,
+                           ocasion: Optional[str] = None,
+                           color_preferido: Optional[str] = None) -> list[dict]:
+        d = self.puntuar(perfil, estilo, ocasion, color_preferido)
         if categoria:
             d = d[d["categoria"] == categoria]
         d = d.drop_duplicates("nombre").head(n)
@@ -138,8 +157,10 @@ class Recomendador:
     # ------------------------------------------------------------------
     def recomendar_outfits(self, perfil: PerfilUsuario, n: int = 5,
                            estilo: Optional[str] = None, top_k: int = 10,
-                           incluir_abrigo: bool = True) -> list[dict]:
-        d = self.puntuar(perfil, estilo)
+                           incluir_abrigo: bool = True,
+                           ocasion: Optional[str] = None,
+                           color_preferido: Optional[str] = None) -> list[dict]:
+        d = self.puntuar(perfil, estilo, ocasion, color_preferido)
 
         def pool(cat):
             sub = d[d["categoria"] == cat].drop_duplicates("nombre").head(top_k)
@@ -214,6 +235,22 @@ class Recomendador:
 
         n_estamp = sum(bool(p["estampado"]) for p in piezas.values())
         penal = {0: 1.0, 1: 1.0, 2: 0.85}.get(n_estamp, 0.7)   # 2+ estampados chocan
+
+        colores = [str(p["color_hex"]).upper() for p in piezas.values()
+                   if p.get("color_hex")]
+        repeticiones = Counter(colores)
+        color_repetido = max(repeticiones.values(), default=0)
+        if len(colores) >= 3 and color_repetido >= 3:
+            penal *= 0.82
+        elif len(colores) >= 3 and color_repetido >= 2:
+            penal *= 0.90
+
+        familias = [familia_color(p["color_info"]) for p in piezas.values()]
+        familias_con_color = [f for f in familias if f != "neutro"]
+        if len(familias_con_color) >= 3 and len(set(familias_con_color)) == 1:
+            penal *= 0.80
+        if len(familias_con_color) >= 3 and len(set(familias_con_color)) == 2:
+            penal *= 0.94
         return (0.6 * base + 0.2 * est + 0.2 * col) * penal
 
     def _ruta_imagen(self, p: str) -> str:

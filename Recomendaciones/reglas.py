@@ -9,6 +9,7 @@ Las llaves de forma son EXACTAMENTE las que devuelve tu clasificador
 from __future__ import annotations
 
 import unicodedata
+from typing import Optional
 
 
 def norm(texto) -> str:
@@ -66,6 +67,34 @@ _ESTILOS = {
 
 def compat_estilo(e1: str, e2: str) -> float:
     return _ESTILOS.get((e1, e2), _ESTILOS.get((e2, e1), 0.5))
+
+
+def puntaje_ocasion(estilo: str, subcategoria: str, ocasion: Optional[str]) -> float:
+    """Evalua si una prenda encaja en una ocasion elegida por el usuario."""
+    if not ocasion:
+        return 1.0
+    estilo = norm(estilo)
+    subcategoria = norm(subcategoria)
+
+    if ocasion == "casual":
+        return 1.0 if estilo in {"casual", "streetwear"} else 0.75
+    if ocasion in {"elegante", "formal"}:
+        return 1.0 if estilo in {"elegante", "formal"} else 0.45
+    if ocasion == "deportivo":
+        return 1.0 if estilo == "deportivo" else 0.35
+    if ocasion == "playa":
+        playa = {"shorts", "skirt", "dress", "top", "vest top", "sandals",
+                 "flip flop", "wedge", "blouse"}
+        return 1.0 if estilo == "casual" and subcategoria in playa else (
+            0.75 if estilo == "casual" else 0.25)
+    if ocasion == "frio":
+        frio = {"coat", "jacket", "blazer", "cardigan", "sweater", "hoodie",
+                "tailored waistcoat"}
+        return 1.0 if subcategoria in frio else (
+            0.65 if estilo in {"casual", "elegante", "formal"} else 0.3)
+    if ocasion == "streetwear":
+        return 1.0 if estilo == "streetwear" else 0.5
+    return 0.5
 
 
 # --------------------------------------------------------------------------
