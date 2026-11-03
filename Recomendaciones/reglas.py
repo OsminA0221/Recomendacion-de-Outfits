@@ -337,6 +337,24 @@ def nivel_termico(subcategoria: str, nombre: str = "", categoria: str = "") -> s
     return "templado"
 
 
+_SUB_CAPA_EXTERIOR = {"sweater", "hoodie", "cardigan", "blazer", "coat", "jacket", "tailored waistcoat"}
+_NOM_CAPA_EXTERIOR = (
+    "jacket", "coat", "blazer", "cardigan", "sweater", "hoodie", "shacket",
+    "fleece", "parka", "puffer", "bomber", "jumper", "pullover", "sweatshirt",
+)
+
+
+def es_capa_exterior(prenda: dict) -> bool:
+    """True si la prenda es un sueter/chaqueta/abrigo (capa superior que abriga),
+    sin importar si el dataset la clasifico como 'top' o como 'abrigo'."""
+    if norm(prenda.get("categoria")) == "abrigo":
+        return True
+    if norm(prenda.get("subcategoria")) in _SUB_CAPA_EXTERIOR:
+        return True
+    nombre = norm(prenda.get("nombre"))
+    return any(k in nombre for k in _NOM_CAPA_EXTERIOR)
+
+
 def compat_prendas(p1: dict, p2: dict, ocasion: Optional[str] = None) -> float:
     """Evalua si dos prendas tienen sentido juntas por estilo, clima y funcion."""
     s_est = compat_estilo(norm(p1.get("estilo")), norm(p2.get("estilo")))
@@ -347,6 +365,13 @@ def compat_prendas(p1: dict, p2: dict, ocasion: Optional[str] = None) -> float:
     cats = {cat1, cat2}
 
     penal = 1.0
+
+    # 0. Nunca dos sueteres/chaquetas/abrigos en el mismo outfit
+    if (
+        cat1 in {"top", "abrigo"} and cat2 in {"top", "abrigo"}
+        and es_capa_exterior(p1) and es_capa_exterior(p2)
+    ):
+        return 0.05
 
     # 1. Nunca mezclar pantuflas de casa o disfraces
     if "slippers" in subs or "costumes" in subs:

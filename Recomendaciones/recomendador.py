@@ -42,6 +42,7 @@ from .reglas import (
     SIN_ESTAMPADO,
     compat_prendas,
     equilibrio_cuerpo_outfit,
+    es_capa_exterior,
     nivel_termico,
     norm,
     puntaje_forma_prenda,
@@ -367,7 +368,10 @@ class Recomendador:
                     and norm(p["subcategoria"]) in {"shorts", "flip flop"}
                     for c, p in piezas_final.items()
                 )
-                if incluir_abrigo and abrigos and oc_norm != "playa" and not tiene_verano:
+                # Si el top ya es sueter/sudadera/cardigan/chaqueta, no se agrega otra capa.
+                ya_tiene_capa = any(es_capa_exterior(p) for p in piezas_final.values())
+                if (incluir_abrigo and abrigos and oc_norm != "playa"
+                        and not tiene_verano and not ya_tiene_capa):
                     disponibles = [a for a in abrigos if libre("abrigo", a)]
                     mejor_abrigo = None
                     mejor_pt_abr = -1.0

@@ -11,7 +11,7 @@ from pathlib import Path
 import cv2
 
 from .recomendador import Recomendador, perfil_desde_dict
-from .reglas import nivel_termico, norm
+from .reglas import es_capa_exterior, nivel_termico, norm
 from .visual import crear_collage
 
 PERFILES = {
@@ -75,6 +75,9 @@ def main() -> None:
                 assert niveles != {"fresco", "abrigo_frio"}, f"Choque termico en {o['piezas']}"
             if perfil.genero == "Hombre":
                 assert "vestido" not in o["piezas"]
+            # Maximo UNA capa que abriga (sueter/sudadera/cardigan/chaqueta/abrigo/blazer)
+            capas = [x["nombre"] for x in o["piezas"].values() if es_capa_exterior(x)]
+            assert len(capas) <= 1, f"Mas de una capa en el outfit: {capas}"
         cv2.imwrite(str(salida / f"perfil_{i}.jpg"), crear_collage(outfits))
     print("\nCollages guardados en", salida)
 
